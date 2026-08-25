@@ -1440,6 +1440,15 @@ async function wipeUser(uid, botId = '') {
 
 async function initPlayground(){try{allBots=await(await fetch('/api/bots')).json();const s=document.getElementById('sim-bot-select');if(s)s.innerHTML=allBots.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');}catch(e){console.error(e);}}
 
+let activePlaygroundRequestId = null;
+
+function renderMarkdown(text) {
+  if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+    return DOMPurify.sanitize(marked.parse(text));
+  }
+  return esc(text);
+}
+
 async function sendPlaygroundMessage() {
   const botId=document.getElementById('sim-bot-select')?.value;
   const text=document.getElementById('sim-input-text')?.value.trim();
@@ -1449,22 +1458,37 @@ async function sendPlaygroundMessage() {
   if(!botId){showToast('Select a bot first','error');return;}
   if(!text&&!imageUrl)return;
 
+  connectLogsSSE();
+
+  const reqId = 'play_' + Math.random().toString(36).substring(2, 10);
+  activePlaygroundRequestId = reqId;
+
   const thread=document.getElementById('sim-messages-thread');
   const uMsg=document.createElement('div');uMsg.className='chat-msg user';
   uMsg.innerHTML=`<div class="msg-author">${username}</div><div>${esc(text)}</div>${imageUrl?`<img src="${imageUrl}" style="max-width:180px;border-radius:6px;margin-top:4px;">`:''}`; 
   thread.appendChild(uMsg);thread.scrollTop=thread.scrollHeight;
   document.getElementById('sim-input-text').value='';
 
-  const bMsg=document.createElement('div');bMsg.className='chat-msg bot';
-  bMsg.innerHTML=`<div class="msg-author">Bot</div><div style="color:var(--text-2);">Processing…</div>`;
+  const bMsg=document.createElement('div');
+  bMsg.className='chat-msg bot';
+  bMsg.id = 'play-msg-' + reqId;
+  bMsg.innerHTML=`
+    <div class="msg-author" id="play-author-${reqId}">Bot <span style="font-size:10px;color:var(--text-3);">Processing…</span></div>
+    <div id="play-tools-${reqId}" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px;"></div>
+    <div id="play-text-${reqId}" class="markdown-body" style="color:var(--text-1); font-size: 13px;"></div>
+  `;
   thread.appendChild(bMsg);thread.scrollTop=thread.scrollHeight;
 
   try{
-    const d=await(await fetch('/api/playground/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bot_id:botId,message:text,username,image_url:imageUrl,override_reply_policy:replyPolicy})})).json();
-    bMsg.innerHTML=d.status==='success'?`<div class="msg-author">Bot ${d.refused?'<span class="badge badge-error">refuse</span>':''}</div><div>${esc(d.reply)}</div>`:`<div class="msg-author">Error</div><div style="color:var(--red);">${esc(d.error||'Error')}</div>`;
-    thread.scrollTop=thread.scrollHeight;
-    renderInspector(d);
-  } catch(e){bMsg.innerHTML=`<div class="msg-author">Error</div><div style="color:var(--red);">${e.message}</div>`;}
+    const d=await(await fetch('/api/playground/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bot_id:botId,message:text,username,image_url:imageUrl,override_reply_policy:replyPolicy,request_id:reqId})})).json();
+    if(d.status === 'error'){
+        document.getElementById(`play-text-${reqId}`).innerHTML=`<div style="color:var(--red);">${esc(d.error||'Error')}</div>`;
+        document.getElementById(`play-author-${reqId}`).innerHTML=`Error`;
+    }
+  } catch(e){
+    document.getElementById(`play-text-${reqId}`).innerHTML=`<div style="color:var(--red);">${e.message}</div>`;
+    document.getElementById(`play-author-${reqId}`).innerHTML=`Error`;
+  }
 }
 
 // ── Tools Settings ──
@@ -2061,6 +2085,49 @@ function disconnectLogsSSE() {
 function handleStreamEvent(data) {
   const type = data.type;
   const requestId = data.request_id;
+  
+  if (requestId === activePlaygroundRequestId) {
+     if (type === 'stream_end') {
+        const authorEl = document.getElementById(`play-author-${requestId}`);
+        if (authorEl) {
+           authorEl.innerHTML = `Bot ${data.refused ? '<span class="badge badge-error">refuse</span>' : ''}`;
+        }
+        if (typeof renderInspector !== 'undefined' && data.debug_inspector) {
+           data.status = data.status || 'success';
+           data.reply = data.reply || data.raw_text;
+           renderInspector(data);
+        }
+        if (data.status === 'error') {
+           const textEl = document.getElementById(`play-text-${requestId}`);
+           if (textEl) textEl.innerHTML = `<div style="color:var(--red);">${esc(data.error||'Error')}</div>`;
+        }
+        // Remove the block cursor
+        const textEl = document.getElementById(`play-text-${requestId}`);
+        if (textEl && window.playgroundTextState && window.playgroundTextState[requestId]) {
+           textEl.innerHTML = renderMarkdown(window.playgroundTextState[requestId]);
+        }
+     } else if (type === 'text_delta') {
+        const textEl = document.getElementById(`play-text-${requestId}`);
+        if (textEl) {
+           if (!window.playgroundTextState) window.playgroundTextState = {};
+           if (!window.playgroundTextState[requestId]) window.playgroundTextState[requestId] = "";
+           window.playgroundTextState[requestId] += (data.text || "");
+           textEl.innerHTML = renderMarkdown(window.playgroundTextState[requestId] + '▌');
+           const thread = document.getElementById('sim-messages-thread');
+           if(thread) thread.scrollTop = thread.scrollHeight;
+        }
+     } else if (type === 'tool_call_start') {
+        const toolsEl = document.getElementById(`play-tools-${requestId}`);
+        if (toolsEl) {
+           toolsEl.innerHTML += `<div class="badge badge-provider" style="font-size:10px; display:flex; align-items:center; gap:4px;"><span class="spinner-inline">⚙️</span> ${esc(data.tool_name)}</div>`;
+        }
+     } else if (type === 'tool_call_result') {
+        const toolsEl = document.getElementById(`play-tools-${requestId}`);
+        if (toolsEl) {
+           toolsEl.innerHTML += `<div class="badge ${data.success ? 'badge-online' : 'badge-error'}" style="font-size:10px;">${data.success ? '✓' : '✗'} ${esc(data.tool_name)}</div>`;
+        }
+     }
+  }
   
   if (type === 'stream_start') {
     // Initialize live stream state

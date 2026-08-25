@@ -30,6 +30,8 @@ async def exec_web_search(query: str, num_results: int = 5) -> Dict[str, Any]:
     num_results = min(max(1, num_results), max_results)
     
     if provider == "searxng" and searxng_url:
+        if not searxng_url.startswith("http"):
+            searxng_url = "http://" + searxng_url
         try:
             url = searxng_url.rstrip("/") + "/search"
             # SearXNG safesearch: 0=none, 1=moderate, 2=strict
@@ -37,9 +39,14 @@ async def exec_web_search(query: str, num_results: int = 5) -> Dict[str, Any]:
             ss_val = ss_map.get(safesearch, "1")
             
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                    "Accept": "application/json"
+                }
                 resp = await client.get(
                     url,
-                    params={"q": query, "format": "json", "safesearch": ss_val}
+                    params={"q": query, "format": "json", "safesearch": ss_val},
+                    headers=headers
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -50,10 +57,11 @@ async def exec_web_search(query: str, num_results: int = 5) -> Dict[str, Any]:
                     ]
                     return {"status": "success", "query": query, "results": formatted}
                 else:
-                    # Fallback on failure if searxng fails HTTP
-                    pass
+                    import logging
+                    logging.getLogger("mimic").warning(f"SearXNG HTTP error {resp.status_code}: {resp.text}")
         except Exception as e:
-            # Fallback on exception
+            import logging
+            logging.getLogger("mimic").error(f"SearXNG request failed: {e}")
             pass
             
     # DuckDuckGo fallback / default
@@ -64,7 +72,8 @@ async def exec_web_search(query: str, num_results: int = 5) -> Dict[str, Any]:
         from duckduckgo_search import DDGS
         def _ddg_sync():
             with DDGS() as ddgs:
-                return list(ddgs.text(query, max_results=num_results, safesearch=ddg_ss_val))
+                # Use backend='html' as it is generally more stable than api
+                return list(ddgs.text(query, backend="html", max_results=num_results, safesearch=ddg_ss_val))
                 
         results = await asyncio.to_thread(_ddg_sync)
         if results:
@@ -74,7 +83,8 @@ async def exec_web_search(query: str, num_results: int = 5) -> Dict[str, Any]:
             ]
             return {"status": "success", "query": query, "results": formatted}
     except Exception as e:
-        # Fallback to DuckDuckGo Instant Answer API / HTML
+        import logging
+        logging.getLogger("mimic").warning(f"DuckDuckGo search error (duckduckgo-search): {e}")
         pass
 
     try:
