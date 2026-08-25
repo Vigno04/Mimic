@@ -1,0 +1,20 @@
+services:
+  mimic:
+    build: .
+    container_name: mimic
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - APP_PORT=${APP_PORT:-8000}
+      - DATABASE_URL=sqlite+aiosqlite:///data/mimic.db
+      - SECRET_KEY=${SECRET_KEY:-mimic_secret_key_change_me}
+    volumes:
+      - ./data:/app/data
+      - ./app:/app/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

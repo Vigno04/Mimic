@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>Mimic</h1>
+        <p>Multi-Bot AI Platform</p>
+      </div>
+
+      <nav class="nav-menu">
+        <a class="nav-item active" data-tab="dashboard">
+          <span class="nav-icon">◉</span>
+          <span>Overview</span>
+        </a>
+        <a class="nav-item" data-tab="bots">
+          <span class="nav-icon">⬡</span>
+          <span>Bots</span>
+        </a>
+        <a class="nav-item" data-tab="endpoints">
+          <span class="nav-icon">⊕</span>
+          <span>Endpoints</span>
+        </a>
+        <a class="nav-item" data-tab="memories">
+          <span class="nav-icon">◎</span>
+          <span>Memory</span>
+        </a>
+        <a class="nav-item" data-tab="playground">
+          <span class="nav-icon">▷</span>
+          <span>Playground</span>
+        </a>
+        <a class="nav-item" data-tab="analytics">
+          <span class="nav-icon">⊘</span>
+          <span>Analytics</span>
+        </a>
+        <a class="nav-item" data-tab="logs">
+          <span class="nav-icon">☰</span>
+          <span>Logs</span>
+        </a>
+        <a class="nav-item" data-tab="backup">
+          <span class="nav-icon">↓</span>
+          <span>Backup</span>
+        </a>
+        <a class="nav-item" data-tab="tools">
+          <span class="nav-icon">⚒</span>
+          <span>Tools</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span>v1.0</span>
+      </div>
+    </aside>
+
+    <main class="main-content">
+
+      <!-- TOOLS -->
+      <section id="tab-tools" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Tools Configuration</h2>
+            <p>Global settings for AI tools like web search.</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-primary" onclick="saveToolSettings()">Save Settings</button>
+          </div>
+        </div>
+        
+        <div class="settings-card">
+          <h3>Web Search Setup</h3>
+          <div class="form-group" style="margin-top:16px;">
+            <label>Search Provider</label>
+            <select id="tools-search-provider" onchange="toggleSearxngInput()">
+              <option value="duckduckgo">DuckDuckGo (Default)</option>
+              <option value="searxng">SearXNG (Custom Instance)</option>
+            </select>
+          </div>
+          
+          <div class="form-group" id="tools-searxng-url-group" style="display:none;">
+            <label>SearXNG URL</label>
+            <input type="text" id="tools-searxng-url" placeholder="e.g. https://searx.be">
+          </div>
+          
+          <div class="form-group">
+            <label>Max Search Results</label>
+            <input type="number" id="tools-max-results" min="1" max="10" value="5">
+          </div>
+          
+          <div class="form-group">
+            <label>SafeSearch</label>
+            <select id="tools-safesearch">
+              <option value="off">Off</option>
+              <option value="moderate">Moderate</option>
+              <option value="strict">Strict</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3>General Tool Settings</h3>
+          <div class="form-group" style="margin-top:16px;">
+            <label>Max Tool Iterations</label>
+            <input type="number" id="tools-max-iterations" min="1" max="20" value="6">
+            <p class="help-text" style="font-size:12px;color:var(--text-muted);margin-top:4px;">Numero massimo di chiamate consecutive ai tool (per prevenire loop infiniti).</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- DASHBOARD -->
+      <section id="tab-dashboard" class="tab-content">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Overview</h2>
+            <p>Metrics and recent activity across all bots.</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadDashboardStats()">Refresh</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-info">
+              <div class="stat-label">Active Bots</div>
+              <div class="stat-value" id="stat-active-bots">0</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-info">
+              <div class="stat-label">Tokens Used</div>
+              <div class="stat-value" id="stat-total-tokens">0</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-info">
+              <div class="stat-label">Messages</div>
+              <div class="stat-value" id="stat-total-messages">0</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-info">
+              <div class="stat-label">Memories</div>
+              <div class="stat-value" id="stat-total-memories">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>Tokens by model</h3>
+            <div class="chart-container"><canvas id="chart-tokens-model"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <h3>Tool calls</h3>
+            <div class="chart-container"><canvas id="chart-tool-calls"></canvas></div>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Model</th>
+                <th>Tokens</th>
+                <th>Status</th>
+                <th>Tools</th>
+                <th>User</th>
+              </tr>
+            </thead>
+            <tbody id="recent-audits-list">
+              <tr><td colspan="6" style="text-align:center; color:var(--text-3);">No activity yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ANALYTICS -->
+      <section id="tab-analytics" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Analytics & Performance</h2>
+            <p>Comprehensive telemetry for token consumption, model performance, tool calls, and community activity.</p>
+          </div>
+          <div class="header-actions analytics-header-actions">
+            <div class="range-selector" id="an-range-selector">
+              <button type="button" class="range-btn" data-range="24h" onclick="setAnalyticsRange('24h')">24h</button>
+              <button type="button" class="range-btn" data-range="7d" onclick="setAnalyticsRange('7d')">7d</button>
+              <button type="button" class="range-btn active" data-range="30d" onclick="setAnalyticsRange('30d')">30d</button>
+              <button type="button" class="range-btn" data-range="90d" onclick="setAnalyticsRange('90d')">90d</button>
+              <button type="button" class="range-btn" data-range="all" onclick="setAnalyticsRange('all')">All</button>
+            </div>
+            <select id="an-bot" onchange="loadAnalytics()" class="analytics-bot-select" title="Filter by bot">
+              <option value="">All Bots</option>
+            </select>
+            <button class="btn btn-secondary btn-icon" onclick="loadAnalytics()" title="Refresh telemetry">
+              <span>↻</span> Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- KPI Metric Summary Row -->
+        <div class="analytics-kpi-grid">
+          <div class="stat-card kpi-card">
+            <div class="kpi-icon-badge kpi-accent">⚡</div>
+            <div class="stat-info">
+              <div class="stat-label">AI Requests</div>
+              <div class="stat-value" id="an-total-requests">0</div>
+              <div class="kpi-subtext" id="an-sub-requests">In selected range</div>
+            </div>
+          </div>
+          <div class="stat-card kpi-card">
+            <div class="kpi-icon-badge kpi-purple">◈</div>
+            <div class="stat-info">
+              <div class="stat-label">Tokens Consumed</div>
+              <div class="stat-value" id="an-total-tokens">0</div>
+              <div class="kpi-subtext" id="an-sub-tokens">0 prompt · 0 completion</div>
+            </div>
+          </div>
+          <div class="stat-card kpi-card">
+            <div class="kpi-icon-badge kpi-cyan">⌥</div>
+            <div class="stat-info">
+              <div class="stat-label">Avg Tokens / Req</div>
+              <div class="stat-value" id="an-avg-tokens">0</div>
+              <div class="kpi-subtext" id="an-sub-avg">Per completed query</div>
+            </div>
+          </div>
+          <div class="stat-card kpi-card">
+            <div class="kpi-icon-badge kpi-green">✓</div>
+            <div class="stat-info">
+              <div class="stat-label">Success Rate</div>
+              <div class="stat-value" id="an-success-rate">100%</div>
+              <div class="kpi-subtext" id="an-sub-refused">0 refused</div>
+            </div>
+          </div>
+          <div class="stat-card kpi-card">
+            <div class="kpi-icon-badge kpi-amber">💬</div>
+            <div class="stat-info">
+              <div class="stat-label">Community Chat</div>
+              <div class="stat-value" id="an-total-messages">0</div>
+              <div class="kpi-subtext" id="an-sub-tools">0 tool calls executed</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 1: Requests Timeline & Token Consumption -->
+        <div class="charts-grid analytics-charts-grid">
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3>Requests & Activity Timeline</h3>
+                <p class="chart-subtitle">Daily request volume and refusal anomalies</p>
+              </div>
+              <span class="badge badge-provider">Volume</span>
+            </div>
+            <div class="chart-container" id="container-an-chart-requests">
+              <canvas id="an-chart-requests"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3>Token Consumption Breakdown</h3>
+                <p class="chart-subtitle">Prompt context vs Generated completion</p>
+              </div>
+              <span class="badge badge-global">Tokens</span>
+            </div>
+            <div class="chart-container" id="container-an-chart-tokens">
+              <canvas id="an-chart-tokens"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: Tokens by Model & AI Tools Usage -->
+        <div class="charts-grid analytics-charts-grid">
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3>Tokens by AI Model</h3>
+                <p class="chart-subtitle">Daily token allocation across active models</p>
+              </div>
+              <span class="badge badge-online">Models</span>
+            </div>
+            <div class="chart-container" id="container-an-chart-model">
+              <canvas id="an-chart-model"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3>AI Tool Invocations</h3>
+                <p class="chart-subtitle">Frequency of search, memory, and utility calls</p>
+              </div>
+              <span class="badge badge-provider">Tools</span>
+            </div>
+            <div class="chart-container" id="container-an-chart-tools">
+              <canvas id="an-chart-tools"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 3: Hourly Distribution & Per-bot Usage -->
+        <div class="charts-grid analytics-charts-grid">
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3>24-Hour Activity Pattern</h3>
+                <p class="chart-subtitle">Hourly peak usage distribution (UTC)</p>
+              </div>
+              <span class="badge badge-offline">Heatmap</span>
+            </div>
+            <div class="chart-container" id="container-an-chart-hourly">
+              <canvas id="an-chart-hourly"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h3>Bot Utilization Share</h3>
+                <p class="chart-subtitle">Requests & tokens processed per bot instance</p>
+              </div>
+              <span class="badge badge-provider">Instances</span>
+            </div>
+            <div class="chart-container" id="container-an-chart-bots">
+              <canvas id="an-chart-bots"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 4: Detailed Breakdown Tables -->
+        <div class="charts-grid analytics-tables-grid">
+          <div class="table-container analytics-table-wrapper">
+            <div class="table-header-bar">
+              <h4>Model Performance & Cost Matrix</h4>
+              <span style="font-size:12px; color:var(--text-2);">Efficiency breakdown</span>
+            </div>
+            <table class="analytics-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Requests</th>
+                  <th>Total Tokens</th>
+                  <th>Avg / Req</th>
+                  <th>Share</th>
+                </tr>
+              </thead>
+              <tbody id="an-model-table">
+                <tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">Loading model statistics…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="table-container analytics-table-wrapper">
+            <div class="table-header-bar">
+              <h4>Top Community Contributors</h4>
+              <span style="font-size:12px; color:var(--text-2);">Leaderboard</span>
+            </div>
+            <table class="analytics-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Messages</th>
+                  <th>Activity Share</th>
+                </tr>
+              </thead>
+              <tbody id="an-users-table">
+                <tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:24px;">Loading user leaderboard…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- BOTS -->
+      <section id="tab-bots" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Bots</h2>
+            <p>Manage Discord bot instances, prompts and fallback chains.</p>
+          </div>
+          <div class="header-actions" style="gap:8px;">
+            <button class="btn btn-secondary" onclick="openGuideModal()">📘 Discord Setup Guide</button>
+            <button class="btn btn-primary" onclick="openCreateBotModal()">+ New bot</button>
+          </div>
+        </div>
+        <div class="cards-grid" id="bots-cards-container"></div>
+      </section>
+
+      <!-- ENDPOINTS -->
+      <section id="tab-endpoints" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Endpoints</h2>
+            <p>LLM provider pool with priority fallback.</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-primary" onclick="openCreateEndpointModal()">New endpoint</button>
+          </div>
+        </div>
+        <div class="cards-grid" id="endpoints-cards-container"></div>
+      </section>
+
+      <!-- MEMORIES -->
+      <section id="tab-memories" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Memory</h2>
+            <p>Server lore and user facts managed by AI.</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn" id="btn-mem-server" onclick="switchMemorySubtab('server')" style="background:var(--bg-3);">Server</button>
+            <button class="btn btn-secondary" id="btn-mem-user" onclick="switchMemorySubtab('user')">Users</button>
+            <button class="btn btn-secondary" id="btn-mem-chat" onclick="switchMemorySubtab('chat')">Chat History</button>
+            <button class="btn btn-primary" id="btn-add-memory" onclick="openAddMemoryModal()">+ Add memory</button>
+          </div>
+        </div>
+
+        <div id="memory-search-bar" style="display:flex; gap:12px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+          <input type="text" id="memory-search" placeholder="Search memories or users…" oninput="loadMemories()" style="width:100%; max-width:320px;">
+          <select id="memory-bot-filter" onchange="loadMemories()" style="max-width:200px;">
+            <option value="">All bots</option>
+          </select>
+          <div id="user-memory-view-toggle" style="display:none; margin-left:auto; gap:6px;">
+            <button type="button" class="btn btn-sm btn-secondary" id="btn-sync-members" onclick="syncServerMembersFromDiscord()" title="Fetch and sync all Discord server members, usernames, nicknames, and avatars">↻ Sync Server Members</button>
+            <button type="button" class="btn btn-sm" id="btn-view-cards" onclick="setUserMemoryViewMode('cards')" style="background:var(--bg-3);">🗂️ User Cards</button>
+            <button type="button" class="btn btn-sm btn-secondary" id="btn-view-table" onclick="setUserMemoryViewMode('table')">📋 Table</button>
+          </div>
+        </div>
+
+        <!-- User Memory Cards Grid -->
+        <div id="user-memories-cards-container" style="display:none; margin-bottom:16px;" class="cards-grid"></div>
+
+        <!-- Standard Memories Table -->
+        <div class="table-container" id="memories-table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Bot</th>
+                <th>Key / User</th>
+                <th>Fact</th>
+                <th>Category</th>
+                <th>Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="memories-table-body"></tbody>
+          </table>
+        </div>
+
+        <!-- Chat History View -->
+        <div id="chat-history-view" style="display:none;">
+          <div style="display:flex; gap:12px; margin-bottom:16px; align-items:center;">
+            <select id="chat-history-bot-filter" style="max-width:200px;" onchange="loadChatHistory()">
+              <option value="">All bots</option>
+            </select>
+            <select id="chat-history-channel-filter" style="max-width:200px;" onchange="loadChatHistory()">
+              <option value="">All channels</option>
+            </select>
+            <button class="btn btn-secondary" onclick="syncChatHistory()">Force Sync with Discord</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Channel</th>
+                  <th>Author</th>
+                  <th>Message</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="chat-history-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- PLAYGROUND -->
+      <section id="tab-playground" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Playground</h2>
+            <p>Test bots with the debug inspector.</p>
+          </div>
+          <div class="header-actions" style="gap:8px; align-items:center;">
+            <select id="sim-bot-select" style="min-width:160px;"></select>
+            <select id="sim-reply-policy">
+              <option value="">Default policy</option>
+              <option value="ai_choice">Force ai_choice</option>
+              <option value="mandatory">Force mandatory</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="playground-container">
+          <div class="chat-box">
+            <div class="chat-messages" id="sim-messages-thread">
+              <div class="chat-msg bot">
+                <div class="msg-author">System</div>
+                <div>Ready. Send a message to test the bot.</div>
+              </div>
+            </div>
+            <div style="padding:8px 16px; border-top:1px solid var(--border); display:flex; gap:8px;">
+              <input type="text" id="sim-username" placeholder="Username" style="width:120px; font-size:12px;" value="User">
+              <input type="text" id="sim-image-url" placeholder="Image URL (optional)" style="flex:1; font-size:12px;">
+            </div>
+            <div class="chat-input-area">
+              <input type="text" id="sim-input-text" placeholder="Type a message…" style="flex:1;">
+              <button class="btn btn-primary" onclick="sendPlaygroundMessage()">Send</button>
+            </div>
+          </div>
+
+          <div class="inspector-box">
+            <div class="inspector-header">
+              <span>Debug Inspector</span>
+              <span style="font-size:11px; color:var(--text-3);">Execution trace</span>
+            </div>
+            <div class="inspector-body" id="inspector-content">
+              <div style="color:var(--text-3); text-align:center; margin-top:40px;">
+                Send a message to see execution details.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- LOGS -->
+      <section id="tab-logs" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Detailed Logs</h2>
+            <p>View AI inputs, outputs, tool calls and prompts for debugging.</p>
+          </div>
+          <div class="header-actions" style="gap:8px; align-items:center;">
+            <div id="live-feed-indicator" style="display:none; align-items:center; gap:6px; padding:4px 12px; background:rgba(239,68,68,0.15); border-radius:20px; border:1px solid rgba(239,68,68,0.3);">
+              <span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;animation:pulse-dot 1.5s ease-in-out infinite;"></span>
+              <span style="font-size:11px;color:#ef4444;font-weight:600;">LIVE</span>
+            </div>
+            <select id="logs-bot-filter" onchange="loadLogs()" style="min-width:160px;">
+              <option value="">All Bots</option>
+            </select>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:12px;">Limit:</span>
+              <input type="number" id="logs-limit" value="10" min="1" max="100" style="width:60px;" onchange="loadLogs()">
+            </div>
+            <button class="btn btn-secondary" onclick="loadLogs()">↻ Refresh</button>
+          </div>
+        </div>
+
+        <!-- Live Streaming Preview -->
+        <div id="live-stream-container" style="display:none; margin-bottom:16px;">
+          <div class="bot-card" style="border-left:4px solid var(--primary); background:linear-gradient(180deg, var(--bg-1), var(--bg-2));">
+            <div class="card-header" style="border-bottom:1px solid var(--border); padding-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:16px;">⚡</span>
+                <div>
+                  <div style="font-weight:600; font-size:13px; display:flex; align-items:center; gap:6px;">
+                    <span id="live-stream-bot-name">—</span>
+                    <span class="badge" id="live-stream-status-badge" style="background:rgba(59,130,246,0.2); color:#60a5fa; font-size:11px;">⏳ Initializing</span>
+                  </div>
+                  <div style="font-size:11px; color:var(--text-3);" id="live-stream-meta">—</div>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="badge badge-provider" id="live-stream-model">—</span>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('live-stream-container').style.display='none';" style="padding:2px 6px; font-size:11px;">✕</button>
+              </div>
+            </div>
+
+            <!-- Pipeline Step & Failover Log -->
+            <div id="live-stream-pipeline-steps" style="padding:8px 16px; font-size:12px; display:flex; flex-direction:column; gap:4px; border-bottom:1px solid var(--border); background:var(--bg-0);">
+              <div id="live-stream-current-step" style="display:flex; align-items:center; gap:6px; color:var(--text-2);">
+                <span class="spinner-inline">⏳</span> <span>Connecting to endpoint...</span>
+              </div>
+            </div>
+
+            <!-- Tool Calls Section -->
+            <div id="live-stream-tools-wrapper" style="display:none; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--bg-1);">
+              <div style="font-size:11px; font-weight:600; color:var(--text-3); text-transform:uppercase; margin-bottom:4px;">Tools Executed</div>
+              <div id="live-stream-tools" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+            </div>
+
+            <!-- Reasoning / Thinking Section (DeepSeek / Gemma / Qwen) -->
+            <div id="live-stream-reasoning-wrapper" style="display:none; padding:8px 16px; border-bottom:1px solid var(--border); background:rgba(234,179,8,0.04);">
+              <details open>
+                <summary style="font-size:11px; font-weight:600; color:#eab308; cursor:pointer; user-select:none; margin-bottom:4px;">
+                  🧠 Model Thinking Process (<span id="live-stream-reasoning-count">0</span> chars)
+                </summary>
+                <pre id="live-stream-reasoning-text" style="background:var(--bg-0); padding:8px 10px; border-radius:6px; font-size:11px; white-space:pre-wrap; max-height:120px; overflow-y:auto; margin:0; border:1px solid rgba(234,179,8,0.2); color:#fbbf24;"></pre>
+              </details>
+            </div>
+
+            <!-- Stream Output Text -->
+            <div style="padding:10px 16px 12px;">
+              <div style="font-size:11px; font-weight:600; color:var(--text-3); text-transform:uppercase; margin-bottom:4px;">Response Stream</div>
+              <pre id="live-stream-text" style="background:var(--bg-0); padding:10px 12px; border-radius:6px; font-size:12px; line-height:1.45; white-space:pre-wrap; max-height:220px; overflow-y:auto; margin:0; border:1px solid var(--border); color:var(--text-1); min-height:45px;"></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Bot / User / Channel</th>
+                <th>Model</th>
+                <th>Tokens</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="logs-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- BACKUP -->
+      <section id="tab-backup" class="tab-content" style="display:none;">
+        <div class="page-header">
+          <div class="page-title">
+            <h2>Backup & Restore</h2>
+            <p>Export or import the full database as JSON.</p>
+          </div>
+        </div>
+
+        <div class="cards-grid">
+          <div class="bot-card">
+            <div class="card-header">
+              <div class="card-title">Export</div>
+            </div>
+            <p style="font-size:13px; color:var(--text-2);">Download all configs, bots, endpoints and memories as a single JSON file.</p>
+            <div class="card-actions" style="border-top:none; padding-top:0;">
+              <button class="btn btn-primary" onclick="downloadBackup()">Download backup</button>
+            </div>
+          </div>
+
+          <div class="bot-card">
+            <div class="card-header">
+              <div class="card-title">Import</div>
+            </div>
+            <p style="font-size:13px; color:var(--text-2);">Restore from a previously exported JSON backup file.</p>
+            <input type="file" id="backup-upload-input" accept=".json" style="display:none;" onchange="uploadBackup(event)">
+            <div class="card-actions" style="border-top:none; padding-top:0;">
+              <button class="btn btn-secondary" onclick="document.getElementById('backup-upload-input').click()">Select file</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- MODAL: ENDPOINT -->
+  <div class="modal-backdrop" id="modal-endpoint">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-endpoint-title">New Endpoint</div>
+        <button class="modal-close" onclick="closeModal('modal-endpoint')">&times;</button>
+      </div>
+      <form id="form-endpoint">
+        <input type="hidden" id="endpoint-id">
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Name</label>
+              <input type="text" id="endpoint-name" placeholder="e.g. OpenAI Primary" required>
+            </div>
+            <div class="form-group">
+              <label>Provider</label>
+              <select id="endpoint-provider" required>
+                <option value="openai_compatible">OpenAI Compatible</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Model</label>
+              <input type="text" id="endpoint-model-name" placeholder="gpt-4o-mini" required>
+            </div>
+            <div class="form-group">
+              <label>Base URL</label>
+              <input type="text" id="endpoint-base-url" placeholder="Leave empty for default">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input type="password" id="endpoint-api-key" placeholder="sk-…">
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="endpoint-global-fallback">
+              <span>Global fallback (auto-appended to all bot chains)</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-endpoint')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: BOT -->
+  <div class="modal-backdrop" id="modal-bot">
+    <div class="modal modal-wide" style="max-width:760px;">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="modal-title" id="modal-bot-title">New Bot Setup</div>
+          <span class="badge badge-provider" id="modal-bot-mode-badge">Guided Tutorial</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button type="button" class="btn btn-sm btn-secondary" id="btn-toggle-bot-mode" onclick="toggleBotFormMode()">⚡ Skip Tutorial (Classic Form)</button>
+          <button type="button" class="modal-close" onclick="closeModal('modal-bot')">&times;</button>
+        </div>
+      </div>
+
+      <form id="form-bot">
+        <input type="hidden" id="bot-id">
+
+        <!-- ═══ WIZARD VIEW ═══ -->
+        <div id="bot-wizard-view">
+          <!-- Stepper bar -->
+          <div class="wizard-stepper">
+            <div class="stepper-step active" data-step="1" onclick="jumpToWizardStep(1)">
+              <div class="step-circle"><span class="step-num">1</span></div>
+              <span class="step-label">App & Token</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" data-step="2" onclick="jumpToWizardStep(2)">
+              <div class="step-circle"><span class="step-num">2</span></div>
+              <span class="step-label">Intents</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" data-step="3" onclick="jumpToWizardStep(3)">
+              <div class="step-circle"><span class="step-num">3</span></div>
+              <span class="step-label">Invite Bot</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" data-step="4" onclick="jumpToWizardStep(4)">
+              <div class="step-circle"><span class="step-num">4</span></div>
+              <span class="step-label">AI & Personality</span>
+            </div>
+            <div class="stepper-line"></div>
+            <div class="stepper-step" data-step="5" onclick="jumpToWizardStep(5)">
+              <div class="step-circle"><span class="step-num">5</span></div>
+              <span class="step-label">Triggers & Finish</span>
+            </div>
+          </div>
+
+          <!-- Wizard Body Panels -->
+          <div class="modal-body wizard-body">
+
+            <!-- STEP 1: Application & Token -->
+            <div class="wizard-step-pane active" id="wiz-step-pane-1">
+              <div class="guide-paper-card">
+                <div class="guide-paper-header">
+                  <div class="guide-badge">Stage 1 of 5</div>
+                  <h4>Create Discord Application & Get Token</h4>
+                </div>
+                <p class="guide-paper-text">
+                  To connect your bot to Discord, you need a Bot Token from the official Discord Developer Portal.
+                </p>
+                <div class="guide-instructions-list">
+                  <div class="guide-inst-item">
+                    <span class="guide-inst-idx">1</span>
+                    <div>Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" class="guide-link">Discord Developer Portal ↗</a> and click <strong>"New Application"</strong>.</div>
+                  </div>
+                  <div class="guide-inst-item">
+                    <span class="guide-inst-idx">2</span>
+                    <div>Name your bot, then navigate to the <strong>"Bot"</strong> tab in the left sidebar.</div>
+                  </div>
+                  <div class="guide-inst-item">
+                    <span class="guide-inst-idx">3</span>
+                    <div>Click <strong>"Reset Token"</strong> (or Copy Token) and paste it below.</div>
+                  </div>
+                </div>
+                <div style="margin-top:12px;">
+                  <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" class="btn btn-sm btn-discord">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="margin-right:6px;"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.893.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+                    Open Discord Developer Portal ↗
+                  </a>
+                </div>
+              </div>
+
+              <div class="form-row" style="margin-top:16px;">
+                <div class="form-group">
+                  <label for="bot-name">Bot Display Name <span style="color:var(--red);">*</span></label>
+                  <input type="text" id="bot-name" placeholder="e.g. Jarvis, LoreKeeper" required>
+                  <span class="form-hint">The name used to identify this bot in the platform.</span>
+                </div>
+                <div class="form-group">
+                  <label for="bot-token">Discord Bot Token <span style="color:var(--red);">*</span></label>
+                  <div style="display:flex; gap:6px;">
+                    <input type="password" id="bot-token" placeholder="MTI..." autocomplete="new-password" required style="flex:1;">
+                    <button type="button" class="btn btn-secondary" onclick="toggleTokenVisibility('bot-token', this)" style="padding:0 10px;" title="Show/Hide">👁</button>
+                  </div>
+                  <span class="form-hint">Keep this token secret. Found under Bot ➔ Reset Token.</span>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top:12px;">
+                <label for="wiz-client-id">Discord Client ID / Application ID <span style="color:var(--text-3); font-weight:normal;">(Optional - helps auto-generate server invite link)</span></label>
+                <input type="text" id="wiz-client-id" placeholder="e.g. 123456789012345678" oninput="onWizClientIdChange()">
+                <span class="form-hint">Found under "General Information" ➔ "Application ID" on Discord Developer Portal.</span>
+              </div>
+            </div>
+
+            <!-- STEP 2: Gateway Intents -->
+            <div class="wizard-step-pane" id="wiz-step-pane-2">
+              <div class="guide-paper-card highlight-box">
+                <div class="guide-paper-header">
+                  <div class="guide-badge badge-warning">Crucial Stage 2 of 5</div>
+                  <h4>Enable Privileged Gateway Intents</h4>
+                </div>
+                <div class="alert-banner-warning">
+                  ⚠️ <strong>Why this matters:</strong> Without <strong>Message Content Intent</strong>, Discord prevents bots from reading any message text! The bot will be online but won't respond to anything.
+                </div>
+                
+                <div class="guide-instructions-list" style="margin-top:12px;">
+                  <div class="guide-inst-item">
+                    <span class="guide-inst-idx">1</span>
+                    <div>In Discord Developer Portal, stay on the <strong>"Bot"</strong> tab.</div>
+                  </div>
+                  <div class="guide-inst-item">
+                    <span class="guide-inst-idx">2</span>
+                    <div>Scroll down to the <strong>"Privileged Gateway Intents"</strong> section.</div>
+                  </div>
+                  <div class="guide-inst-item">
+                    <span class="guide-inst-idx">3</span>
+                    <div>Toggle <strong>ON</strong> the following 3 switches:</div>
+                  </div>
+                </div>
+
+                <div class="intent-cards-grid">
+                  <div class="intent-item-box active">
+                    <div class="intent-item-header">
+                      <span class="badge badge-online">REQUIRED</span>
+                      <strong>MESSAGE CONTENT INTENT</strong>
+                    </div>
+                    <p>Allows the bot to read chat messages and process keyword/command triggers.</p>
+                  </div>
+                  <div class="intent-item-box active">
+                    <div class="intent-item-header">
+                      <span class="badge badge-online">RECOMMENDED</span>
+                      <strong>SERVER MEMBERS INTENT</strong>
+                    </div>
+                    <p>Allows tracking user names, IDs, mentions, and long-term user memories.</p>
+                  </div>
+                  <div class="intent-item-box">
+                    <div class="intent-item-header">
+                      <span class="badge badge-offline">OPTIONAL</span>
+                      <strong>PRESENCE INTENT</strong>
+                    </div>
+                    <p>Allows viewing member activity and online status.</p>
+                  </div>
+                </div>
+
+                <div class="guide-inst-item" style="margin-top:12px;">
+                  <span class="guide-inst-idx">4</span>
+                  <div>Click the green <strong>"Save Changes"</strong> button at the bottom of the Discord page.</div>
+                </div>
+              </div>
+
+              <div class="checklist-container" style="margin-top:16px;">
+                <label class="checkbox-label" style="font-weight:500;">
+                  <input type="checkbox" id="wiz-check-intents">
+                  <span>I have enabled <strong>Message Content Intent</strong> and saved changes in Discord</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- STEP 3: Invite Bot to Server -->
+            <div class="wizard-step-pane" id="wiz-step-pane-3">
+              <div class="guide-paper-card">
+                <div class="guide-paper-header">
+                  <div class="guide-badge">Stage 3 of 5</div>
+                  <h4>Invite Bot to Your Discord Server</h4>
+                </div>
+                <p class="guide-paper-text">
+                  Your bot needs an OAuth2 invite link with permissions to view channels and send messages in your server.
+                </p>
+
+                <!-- Auto Generator Widget -->
+                <div class="invite-generator-widget">
+                  <div style="font-size:12px; font-weight:600; color:var(--text-0); margin-bottom:6px;">Instant Invite Link Generator</div>
+                  <div style="display:flex; gap:8px;">
+                    <input type="text" id="wiz-invite-url-input" placeholder="Enter Client ID in Step 1 or paste link here" readonly style="flex:1; font-family:var(--mono); font-size:12px;">
+                    <button type="button" class="btn btn-secondary" onclick="copyInviteUrl()">📋 Copy</button>
+                    <button type="button" class="btn btn-discord" onclick="openInviteUrl()">Open Invite Link ↗</button>
+                  </div>
+                  <div style="font-size:11px; color:var(--text-2); margin-top:6px;">
+                    Preconfigured with: <em>Send Messages, View Channels, Read History, Embed Links, Attach Files</em> (Permissions: <code>412317273152</code>)
+                  </div>
+                </div>
+
+                <div class="accordion-item" style="margin-top:16px;">
+                  <div class="accordion-header" onclick="toggleAccordion(this)">
+                    <span>Manual URL Generator Instructions (Click to expand)</span>
+                    <span>▼</span>
+                  </div>
+                  <div class="accordion-body" style="display:none; padding:12px; font-size:12px; color:var(--text-1); line-height:1.6;">
+                    1. Go to <strong>OAuth2 ➔ URL Generator</strong> on Discord Developer Portal.<br>
+                    2. Under <strong>Scopes</strong>, check: <code>bot</code> and <code>applications.commands</code>.<br>
+                    3. Under <strong>Bot Permissions</strong>, check: <em>View Channels, Send Messages, Send Messages in Threads, Read Message History, Embed Links, Attach Files, Add Reactions</em>.<br>
+                    4. Copy the generated URL at the bottom and open it in your browser to add the bot to your server.
+                  </div>
+                </div>
+              </div>
+
+              <div class="checklist-container" style="margin-top:16px;">
+                <label class="checkbox-label" style="font-weight:500;">
+                  <input type="checkbox" id="wiz-check-invited">
+                  <span>I have invited the bot to my Discord server</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- STEP 4: AI Model & Personality -->
+            <div class="wizard-step-pane" id="wiz-step-pane-4">
+              <div class="guide-paper-card">
+                <div class="guide-paper-header">
+                  <div class="guide-badge">Stage 4 of 5</div>
+                  <h4>AI Model Provider & Bot Personality</h4>
+                </div>
+                <p class="guide-paper-text">
+                  Choose the LLM endpoint chain for this bot, and craft its persona (character traits, speaking style, quirks, and tone of voice).
+                </p>
+              </div>
+
+              <div class="form-group" style="margin-top:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label style="margin:0;">LLM Endpoint Chain (Priority Fallback) <span style="color:var(--red);">*</span></label>
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="openCreateEndpointModal()">+ Add Endpoint</button>
+                </div>
+                <div id="bot-endpoints-chain-list" style="max-height:180px; overflow-y:auto; margin-top:6px;"></div>
+                <span class="form-hint">Use ▲ / ▼ to reorder endpoint priority. Checked endpoints are executed in order as fallbacks.</span>
+              </div>
+
+              <div class="form-group" style="margin-top:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                  <div>
+                    <label style="margin:0;">Bot Persona & Personality</label>
+                    <div style="font-size:11px; color:var(--text-3); font-weight:normal;">Defines who the bot is: tone of voice, character quirks, mannerisms, and background lore.</div>
+                  </div>
+                  <span style="font-size:11px; color:var(--text-2);">Quick Presets:</span>
+                </div>
+                <!-- Preset chips -->
+                <div class="prompt-presets-container">
+                  <button type="button" class="chip-btn" onclick="applyPromptPreset('assistant')">🤖 Helpful Assistant</button>
+                  <button type="button" class="chip-btn" onclick="applyPromptPreset('companion')">🎭 Friendly Friend</button>
+                  <button type="button" class="chip-btn" onclick="applyPromptPreset('witty')">😏 Sarcastic & Witty</button>
+                  <button type="button" class="chip-btn" onclick="applyPromptPreset('moderator')">🛡️ Server Mod</button>
+                  <button type="button" class="chip-btn" onclick="applyPromptPreset('coder')">💻 Senior Dev</button>
+                  <button type="button" class="chip-btn" onclick="applyPromptPreset('rpg')">🎲 RPG Master</button>
+                </div>
+                <textarea id="bot-system-prompt" rows="4" placeholder="Describe the personality, tone, quirks, and mannerisms of the bot (e.g. 'You are Jarvis, a sophisticated and witty AI butler. Speak with polite sarcasm, concise responses, and British humor...')." style="margin-top:6px;"></textarea>
+              </div>
+
+              <div class="form-row" style="margin-top:12px;">
+                <div class="form-group">
+                  <label for="bot-memory-mode">Memory Mode</label>
+                  <select id="bot-memory-mode">
+                    <option value="recent_active">Recent active users (Recommended)</option>
+                    <option value="full">All memories (Lore & Users)</option>
+                    <option value="tool_only">Tool only</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="bot-cooldown">Cooldown (seconds)</label>
+                  <input type="number" id="bot-cooldown" value="3" min="0" max="60">
+                </div>
+              </div>
+            </div>
+
+            <!-- STEP 5: Triggers, Rules & Finish -->
+            <div class="wizard-step-pane" id="wiz-step-pane-5">
+              <div class="guide-paper-card">
+                <div class="guide-paper-header">
+                  <div class="guide-badge">Stage 5 of 5</div>
+                  <h4>Trigger Rules & Policies</h4>
+                </div>
+                <p class="guide-paper-text">
+                  Define when the bot should activate. Triggers are evaluated in order from top to bottom.
+                </p>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="loadRecommendedTriggers()">⚡ Reset to Standard Triggers</button>
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="addTriggerRuleRow()">+ Add Custom Trigger</button>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top:16px;">
+                <label>Active Trigger Rules</label>
+                <div id="bot-triggers-container" style="max-height:200px; overflow-y:auto;"></div>
+              </div>
+
+              <!-- Channel & User Filters (Collapsible) -->
+              <div class="accordion-item" style="margin-top:12px;">
+                <div class="accordion-header" onclick="toggleAccordion(this)">
+                  <span>Channel & Safety Settings (Optional)</span>
+                  <span>▼</span>
+                </div>
+                <div class="accordion-body" style="display:none; padding:12px; gap:12px; display:none; flex-direction:column;">
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="bot-enabled-channels">Enabled Channel IDs (comma separated)</label>
+                      <input type="text" id="bot-enabled-channels" placeholder="Empty = all channels">
+                    </div>
+                    <div class="form-group">
+                      <label for="bot-blacklisted-channels">Blacklisted Channel IDs</label>
+                      <input type="text" id="bot-blacklisted-channels" placeholder="e.g. 123456, 789012">
+                    </div>
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="bot-blacklisted-users">Blacklisted User IDs</label>
+                      <input type="text" id="bot-blacklisted-users" placeholder="e.g. 123456">
+                    </div>
+                    <div class="form-group">
+                      <label for="bot-recent-messages-count">Chat Context History</label>
+                      <input type="number" id="bot-recent-messages-count" value="15" min="1" max="50">
+                    </div>
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="bot-active-users-count">Active Users in Prompt</label>
+                      <input type="number" id="bot-active-users-count" value="5" min="1" max="20">
+                    </div>
+                    <div class="form-group">
+                      <label for="bot-max-bot-replies">Max Consecutive Bot Replies</label>
+                      <input type="number" id="bot-max-bot-replies" value="1" min="0" max="5">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label class="checkbox-label">
+                      <input type="checkbox" id="bot-ignore-bots" checked>
+                      <span>Ignore other bots (anti-loop protection)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Ready & Start Checkbox -->
+              <div class="ready-banner-box" style="margin-top:16px;">
+                <label class="checkbox-label" style="font-weight:600; color:var(--text-0);">
+                  <input type="checkbox" id="bot-autostart" checked>
+                  <span>🚀 Automatically start bot immediately after creation</span>
+                </label>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Wizard Footer Controls -->
+          <div class="modal-footer wizard-footer">
+            <button type="button" class="btn btn-secondary" id="wiz-btn-prev" onclick="prevWizardStep()" style="display:none;">← Previous</button>
+            <div style="flex:1;"></div>
+            <button type="button" class="btn btn-primary" id="wiz-btn-next" onclick="nextWizardStep()">Next: Intents →</button>
+            <button type="submit" class="btn btn-success" id="wiz-btn-save" style="display:none;">Save & Create Bot 🚀</button>
+          </div>
+        </div>
+
+        <!-- ═══ CLASSIC FULL FORM VIEW ═══ -->
+        <div id="bot-classic-view" style="display:none;">
+          <div class="modal-body">
+            <div class="classic-tip-banner">
+              <span>💡 Looking for step-by-step setup guidance?</span>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="toggleBotFormMode('wizard')">Switch to Guided Setup</button>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Bot name <span style="color:var(--red);">*</span></label>
+                <input type="text" id="bot-name-classic" placeholder="Jarvis" oninput="syncClassicToWizard('name')">
+              </div>
+              <div class="form-group">
+                <label>Discord token <span style="color:var(--red);">*</span></label>
+                <div style="display:flex; gap:6px;">
+                  <input type="password" id="bot-token-classic" style="flex:1;" autocomplete="new-password" oninput="syncClassicToWizard('token')">
+                  <button type="button" class="btn btn-secondary" onclick="toggleTokenVisibility('bot-token-classic', this)" style="padding:0 10px;">👁</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>LLM Endpoint chain (Priority order)</label>
+              <div id="bot-endpoints-chain-list-classic" style="max-height:180px; overflow-y:auto; margin-top:4px;"></div>
+              <span class="form-hint">Use ▲ / ▼ to reorder priority. Checked endpoints are executed in order as fallbacks.</span>
+            </div>
+
+            <div class="form-group">
+              <label>Bot Persona & Personality</label>
+              <textarea id="bot-system-prompt-classic" rows="3" placeholder="Describe the personality, tone, quirks, and mannerisms of the bot..." oninput="syncClassicToWizard('prompt')"></textarea>
+            </div>
+
+            <div class="form-group">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="margin:0;">Trigger rules & Reply policies (evaluated in order)</label>
+                <div style="display:flex; gap:6px;">
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="loadRecommendedTriggers()">⚡ Reset Standard</button>
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="addTriggerRuleRow({}, 'bot-triggers-container-classic')">+ Add trigger</button>
+                </div>
+              </div>
+              <div id="bot-triggers-container-classic" style="max-height:220px; overflow-y:auto;"></div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Memory mode</label>
+                <select id="bot-memory-mode-classic" onchange="syncClassicToWizard('memory_mode')">
+                  <option value="recent_active">Recent active users</option>
+                  <option value="full">All memories</option>
+                  <option value="tool_only">Tool only</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Active users in prompt</label>
+                <input type="number" id="bot-active-users-count-classic" value="5" min="1" max="20">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Recent messages</label>
+                <input type="number" id="bot-recent-messages-count-classic" value="15" min="1" max="50">
+              </div>
+              <div class="form-group">
+                <label>Cooldown (seconds)</label>
+                <input type="number" id="bot-cooldown-classic" value="3" min="0" max="60" oninput="syncClassicToWizard('cooldown')">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="bot-ignore-bots-classic" checked>
+                  <span>Ignore other bots (anti-loop)</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Max consecutive bot replies</label>
+                <input type="number" id="bot-max-bot-replies-classic" value="1" min="0" max="5">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Enabled channels (IDs, comma separated)</label>
+                <input type="text" id="bot-enabled-channels-classic" placeholder="Empty = all">
+              </div>
+              <div class="form-group">
+                <label>Blacklisted channels</label>
+                <input type="text" id="bot-blacklisted-channels-classic">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Blacklisted users</label>
+              <input type="text" id="bot-blacklisted-users-classic">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-bot')">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: STANDALONE DISCORD SETUP GUIDE -->
+  <div class="modal-backdrop" id="modal-guide">
+    <div class="modal modal-wide" style="max-width:720px;">
+      <div class="modal-header">
+        <div class="modal-title">📘 Discord Bot Setup & Troubleshooting Guide</div>
+        <button type="button" class="modal-close" onclick="closeModal('modal-guide')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap:16px;">
+        <div class="guide-paper-card">
+          <h4>🚀 5-Step Discord Bot Deployment Checklist</h4>
+          <ol style="margin-left:20px; margin-top:8px; line-height:1.7; font-size:13px; color:var(--text-1);">
+            <li><strong>Create App:</strong> Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" class="guide-link">Discord Developer Portal ↗</a> ➔ Click <em>New Application</em>.</li>
+            <li><strong>Get Token:</strong> In the <em>Bot</em> tab, click <em>Reset Token</em> and paste it into this platform.</li>
+            <li><strong>Enable Gateway Intents:</strong> In the <em>Bot</em> tab, scroll down to <em>Privileged Gateway Intents</em> and toggle ON <strong>Message Content Intent</strong> and <strong>Server Members Intent</strong>, then click <em>Save Changes</em>.</li>
+            <li><strong>Invite to Server:</strong> In <em>OAuth2 ➔ URL Generator</em>, select scopes <code>bot</code> & <code>applications.commands</code>, permissions <em>Send Messages, View Channels, Read Message History</em>, and open the URL in your browser.</li>
+            <li><strong>Set AI Model & Triggers:</strong> Configure at least one AI Endpoint in this platform, set your triggers (e.g. <code>/ask</code>, @Mention, keyword), and click <strong>Start</strong>.</li>
+          </ol>
+        </div>
+
+        <div class="guide-paper-card highlight-box">
+          <h4>🔍 Common Issues & Solutions</h4>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-top:8px; font-size:12px; color:var(--text-1);">
+            <div style="border-bottom:1px solid var(--border); padding-bottom:8px;">
+              <strong style="color:var(--red);">• Bot shows "online" but ignores all messages / commands:</strong><br>
+              Make sure <strong>Message Content Intent</strong> is toggled ON in Discord Developer Portal under Bot ➔ Privileged Gateway Intents. Without it, Discord silently strips message text.
+            </div>
+            <div style="border-bottom:1px solid var(--border); padding-bottom:8px;">
+              <strong style="color:var(--yellow);">• Bot cannot read or reply in private channels:</strong><br>
+              Check server role permissions. The bot role must have "View Channel" and "Send Messages" permissions in that specific channel.
+            </div>
+            <div>
+              <strong style="color:var(--accent);">• Error: 401 Unauthorized / Token Invalid:</strong><br>
+              Regenerate the token in Discord Developer Portal (Bot ➔ Reset Token) and update it in the bot editor.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-guide')">Close</button>
+        <button type="button" class="btn btn-primary" onclick="closeModal('modal-guide'); openCreateBotModal();">Create New Bot Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: MEMORY -->
+  <div class="modal-backdrop" id="modal-memory">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Add Memory</div>
+        <button class="modal-close" onclick="closeModal('modal-memory')">&times;</button>
+      </div>
+      <form id="form-memory">
+        <input type="hidden" id="memory-id">
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Bot</label>
+            <select id="mem-bot-id">
+              <option value="">(Global / All Bots)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Type</label>
+            <select id="memory-type" onchange="toggleMemoryFormFields()">
+              <option value="server">Server memory</option>
+              <option value="user">User memory</option>
+            </select>
+          </div>
+
+          <div id="mem-field-server">
+            <div class="form-group">
+              <label>Key phrase</label>
+              <input type="text" id="mem-server-key" placeholder="e.g. chess_tournament">
+            </div>
+          </div>
+
+          <div id="mem-field-user" style="display:none;">
+            <div class="form-row">
+              <div class="form-group">
+                <label>User ID</label>
+                <input type="text" id="mem-user-id">
+              </div>
+              <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="mem-user-name">
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Fact</label>
+            <textarea id="mem-fact" placeholder="Describe the fact…" required></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Category</label>
+            <input type="text" id="mem-category" placeholder="general" value="general">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-memory')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="modal-backdrop" id="modal-log-details">
+    <div class="modal modal-wide" style="max-width:800px;">
+      <div class="modal-header">
+        <div class="modal-title">Log Details</div>
+        <button class="modal-close" onclick="closeModal('modal-log-details')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>System Prompt</label>
+          <pre id="log-detail-system" style="background:var(--bg-0); padding:12px; border-radius:6px; font-size:12px; white-space:pre-wrap; max-height:150px; overflow-y:auto; margin:0; border:1px solid var(--border);"></pre>
+        </div>
+        <div class="form-group">
+          <label>Input (Messages)</label>
+          <pre id="log-detail-input" style="background:var(--bg-0); padding:12px; border-radius:6px; font-size:12px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:0; border:1px solid var(--border);"></pre>
+        </div>
+        <div class="form-group">
+          <label>Output</label>
+          <pre id="log-detail-output" style="background:var(--bg-0); padding:12px; border-radius:6px; font-size:12px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:0; border:1px solid var(--border);"></pre>
+        </div>
+        <div class="form-group" id="log-detail-error-container" style="display:none;">
+          <label style="color:var(--red);">Error Message</label>
+          <pre id="log-detail-error" style="background:var(--bg-0); padding:12px; border-radius:6px; font-size:12px; color:var(--red); white-space:pre-wrap; max-height:150px; overflow-y:auto; margin:0; border:1px solid var(--border);"></pre>
+        </div>
+        <div class="form-group">
+          <label>Tools Called</label>
+          <div id="log-detail-tools" style="max-height:250px; overflow-y:auto;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-log-details')">Close</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="toast-container" id="toast-container"></div>
+  <script src="/static/js/app.js?v=3"></script>
+</body>
+</html>
