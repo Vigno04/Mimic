@@ -146,7 +146,9 @@ async def build_llm_context(
     # Add history excluding the last message if it is exactly the same as current_message
     for m in recent_history:
         # Avoid duplicating the last message just sent because we format it with vision below
-        if m["content"] == current_message and m["author_id"] == str(author_id):
+        if message_id and m.get("id") == str(message_id):
+            continue
+        elif not message_id and m.get("content") == current_message and m.get("author_id") == str(author_id):
             continue
         is_bot_msg = (
             (m.get("author_id") == str(bot_id)) or

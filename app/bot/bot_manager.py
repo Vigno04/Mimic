@@ -60,15 +60,17 @@ class MultiBotManager:
             finally:
                 if not instance.bot_client.is_closed():
                     await instance.bot_client.close()
-                if instance.status != "error":
-                    instance.status = "stopped"
                 
-                # Update DB status
-                async with AsyncSessionLocal() as session:
-                    await session.execute(
-                        update(BotModel).where(BotModel.id == bot_id).values(is_running=False)
-                    )
-                    await session.commit()
+                # Update DB status ONLY if it stopped due to an error.
+                # If stopped normally or cancelled by stop_bot, stop_bot handles DB if needed.
+                if instance.status == "error":
+                    async with AsyncSessionLocal() as session:
+                        await session.execute(
+                            update(BotModel).where(BotModel.id == bot_id).values(is_running=False)
+                        )
+                        await session.commit()
+                else:
+                    instance.status = "stopped"
 
         # Update DB status to running
         async with AsyncSessionLocal() as session:

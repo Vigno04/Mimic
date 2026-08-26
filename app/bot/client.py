@@ -119,49 +119,52 @@ class DiscordBotInstance:
             except Exception as e:
                 logger.warning(f"Error syncing slash commands for {self.config.get('name')}: {e}")
                 
-            # Synchronize all server members into discord_users
-            for guild in self.bot_client.guilds:
-                try:
-                    logger.info(f"Bot '{self.config.get('name')}': syncing members for server '{guild.name}' ({guild.id})...")
-                    async for member in guild.fetch_members(limit=1000):
-                        avatar_url = str(member.display_avatar.url) if hasattr(member, "display_avatar") and member.display_avatar else None
-                        global_name = getattr(member, "global_name", None)
-                        await upsert_discord_user(
-                            user_id=str(member.id),
-                            username=member.name,
-                            global_name=global_name,
-                            display_name=member.display_name or global_name or member.name,
-                            avatar_url=avatar_url,
-                            is_bot=member.bot
-                        )
-                    logger.info(f"Bot '{self.config.get('name')}': successfully synced members for '{guild.name}'.")
-                except Exception as e:
-                    logger.warning(f"Error syncing members for server {guild.id}: {e}")
+            async def background_sync():
+                # Synchronize all server members into discord_users
+                for guild in self.bot_client.guilds:
+                    try:
+                        logger.info(f"Bot '{self.config.get('name')}': syncing members for server '{guild.name}' ({guild.id})...")
+                        async for member in guild.fetch_members(limit=1000):
+                            avatar_url = str(member.display_avatar.url) if hasattr(member, "display_avatar") and member.display_avatar else None
+                            global_name = getattr(member, "global_name", None)
+                            await upsert_discord_user(
+                                user_id=str(member.id),
+                                username=member.name,
+                                global_name=global_name,
+                                display_name=member.display_name or global_name or member.name,
+                                avatar_url=avatar_url,
+                                is_bot=member.bot
+                            )
+                        logger.info(f"Bot '{self.config.get('name')}': successfully synced members for '{guild.name}'.")
+                    except Exception as e:
+                        logger.warning(f"Error syncing members for server {guild.id}: {e}")
 
-            # Run catch-up sync for enabled channels
-            enabled_channels = self.config.get("enabled_channels", [])
-            for ch_id_str in enabled_channels:
-                try:
-                    ch_id = int(ch_id_str)
-                    channel = self.bot_client.get_channel(ch_id)
-                    if channel and hasattr(channel, "history"):
-                        recent_msgs = []
-                        async for msg in channel.history(limit=50):
-                            recent_msgs.append({
-                                "id": str(msg.id),
-                                "content": msg.content,
-                                "author_id": str(msg.author.id),
-                                "author_name": msg.author.display_name or msg.author.name,
-                                "channel_name": getattr(channel, "name", "DM"),
-                                "has_attachments": len(msg.attachments) > 0,
-                                "reference_message_id": str(msg.reference.message_id) if msg.reference else None,
-                                "is_reply": msg.type == discord.MessageType.reply,
-                                "reactions": [str(r.emoji) for r in msg.reactions],
-                                "timestamp": msg.created_at.replace(tzinfo=None)  # Store naive UTC to match DB format
-                            })
-                        await sync_channel_history(str(ch_id), recent_msgs, fetch_limit=50)
-                except Exception as e:
-                    logger.warning(f"Error during catch-up sync for channel {ch_id_str} on bot {self.bot_id}: {e}")
+                # Run catch-up sync for enabled channels
+                enabled_channels = self.config.get("enabled_channels", [])
+                for ch_id_str in enabled_channels:
+                    try:
+                        ch_id = int(ch_id_str)
+                        channel = self.bot_client.get_channel(ch_id)
+                        if channel and hasattr(channel, "history"):
+                            recent_msgs = []
+                            async for msg in channel.history(limit=50):
+                                recent_msgs.append({
+                                    "id": str(msg.id),
+                                    "content": msg.content,
+                                    "author_id": str(msg.author.id),
+                                    "author_name": msg.author.display_name or msg.author.name,
+                                    "channel_name": getattr(channel, "name", "DM"),
+                                    "has_attachments": len(msg.attachments) > 0,
+                                    "reference_message_id": str(msg.reference.message_id) if msg.reference else None,
+                                    "is_reply": msg.type == discord.MessageType.reply,
+                                    "reactions": [str(r.emoji) for r in msg.reactions],
+                                    "timestamp": msg.created_at.replace(tzinfo=None)  # Store naive UTC to match DB format
+                                })
+                            await sync_channel_history(str(ch_id), recent_msgs, fetch_limit=50)
+                    except Exception as e:
+                        logger.warning(f"Error during catch-up sync for channel {ch_id_str} on bot {self.bot_id}: {e}")
+                        
+            asyncio.create_task(background_sync())
 
         @self.bot_client.event
         async def on_message(message: discord.Message):
@@ -269,8 +272,6 @@ class DiscordBotInstance:
             logger.debug(f"Notice on user sync in _handle_incoming_message: {e}")
         
         was_follow_up_active = self.active_conversations.get(channel_id, 0) > 0
-        if was_follow_up_active and not message.author.bot:
-            self.active_conversations[channel_id] -= 1
             
         # 1. Vision & Attachments
         has_attachments = len(message.attachments) > 0
@@ -361,6 +362,10 @@ class DiscordBotInstance:
                 logger.debug(f"User {author_name} in cooldown ({elapsed:.1f}s / {cooldown_sec}s)")
                 return
         self.user_cooldowns[author_id] = now
+
+        # Decrement follow up counter ONLY IF the matched rule was follow_up
+        if matched_rule.get("type") == "follow_up":
+            self.active_conversations[channel_id] -= 1
 
         # 9. AI Execution with typing indicator and trigger-specific reply policy
         await self._process_ai_response(message, image_urls, guild_id, reply_policy=rule_reply_policy)
@@ -550,7 +555,7 @@ class DiscordBotInstance:
                 if reply_text:
                     chunks = split_message(reply_text)
                     for idx, chunk in enumerate(chunks):
-                        if idx == 0 and len(chunks) == 1:
+                        if idx == 0:
                             await message.reply(chunk, mention_author=False)
                         else:
                             await message.channel.send(chunk)

@@ -19,22 +19,22 @@ def clean_response_text(text: str) -> str:
         
     raw = text.strip()
     
-    # 1. Remove complete blocks <think>...</think>, <thought>...</thought>, <reasoning>...</reasoning>
-    cleaned = re.sub(r'<(think|thought|reasoning|reflection)>.*?</\1>', '', raw, flags=re.DOTALL | re.IGNORECASE).strip()
+    # 1. Remove complete blocks <think>...</think>, <thought>...</thought>
+    cleaned = re.sub(r'<(think|thought)>.*?</\1>', '', raw, flags=re.DOTALL | re.IGNORECASE).strip()
     
     # 2. Remove square bracket blocks [thinking]...[/thinking]
     if cleaned:
-        cleaned = re.sub(r'\[(thinking|thought|reasoning|reflection)\].*?\[/\1\]', '', cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+        cleaned = re.sub(r'\[(thinking|thought)\].*?\[/\1\]', '', cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
     
-    # 3. Remove truncated blocks at the beginning
+    # 3. Remove truncated blocks (where the closing tag is missing)
     if cleaned:
-        cleaned = re.sub(r'^<(think|thought|reasoning|reflection)>.*?(</\1>|$)', '', cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
-        cleaned = re.sub(r'^\[(thinking|thought|reasoning|reflection)\].*?(\[/\1\]|$)', '', cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+        cleaned = re.sub(r'<(think|thought)>.*$', '', cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+        cleaned = re.sub(r'\[(thinking|thought)\].*$', '', cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
     
     # 4. Remove any residual tags
     if cleaned:
-        cleaned = re.sub(r'</?(think|thought|reasoning|reflection)>', '', cleaned, flags=re.IGNORECASE).strip()
-        cleaned = re.sub(r'\[/?(thinking|thought|reasoning|reflection)\]', '', cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r'</?(think|thought)>', '', cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r'\[/?(thinking|thought)\]', '', cleaned, flags=re.IGNORECASE).strip()
     
     return cleaned.strip()
 
@@ -176,7 +176,7 @@ async def _call_single_endpoint(
         return await _call_anthropic_native(endpoint, messages, active_tools, context, max_tokens)
     else:
         # Use streaming if requested and there are SSE subscribers
-        if stream and event_bus.has_subscribers() and request_id:
+        if stream and request_id:
             return await _call_openai_compatible_stream(endpoint, base_url, api_key, model_name, messages, active_tools, context, max_tokens, request_id, max_iterations=context.get("max_iterations", 6) if context else 6)
         return await _call_openai_compatible(endpoint, base_url, api_key, model_name, messages, active_tools, context, max_tokens, max_iterations=context.get("max_iterations", 6) if context else 6)
 
@@ -277,7 +277,7 @@ async def _call_openai_compatible(
                             "role": "tool",
                             "tool_call_id": tc.get("id", f"call_{len(tools_executed)}"),
                             "name": func_name,
-                            "content": json.dumps(tool_result, ensure_ascii=False)
+                            "content": json.dumps(tool_result, ensure_ascii=False, default=str)
                         })
                         
                     # Continue loop to get assistant's follow-up message after tool execution
@@ -542,7 +542,7 @@ async def _call_openai_compatible_stream(
                                 "role": "tool",
                                 "tool_call_id": tc_obj["id"],
                                 "name": func_name,
-                                "content": json.dumps(tool_result, ensure_ascii=False)
+                                "content": json.dumps(tool_result, ensure_ascii=False, default=str)
                             })
                             
                         # Continue the loop for the follow-up response
