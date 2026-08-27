@@ -217,7 +217,7 @@ async function loadBots() {
         else if (t.type === 'mention') label = `@${b.name}`;
         else if (t.type === 'reply_to_bot' || t.type === 'reply') label = `Reply to ${b.name}`;
         else if (t.type === 'follow_up') label = `Follow up (${t.pattern || 3} msgs)`;
-        else if (t.type === 'spontaneous') label = `⚡ Spontaneous (${t.pattern || '1/day'})`;
+        else if (t.type === 'spontaneous') label = `Spontaneous (${t.pattern || '1/day'})`;
         else if (t.type === 'always') label = `always`;
 
         const polBadge = t.reply_policy === 'mandatory'
@@ -351,7 +351,7 @@ function addTriggerRuleRow(rule = {}, containerOrId = null) {
         <option value="keywords" ${typeVal === 'keywords' ? 'selected' : ''}>Keywords</option>
         <option value="mention" ${typeVal === 'mention' ? 'selected' : ''}>@Mention</option>
         <option value="follow_up" ${typeVal === 'follow_up' ? 'selected' : ''}>Follow Up (Conversation)</option>
-        <option value="spontaneous" ${typeVal === 'spontaneous' ? 'selected' : ''}>⚡ Spontaneous / Proactive</option>
+        <option value="spontaneous" ${typeVal === 'spontaneous' ? 'selected' : ''}>Spontaneous / Proactive</option>
         <option value="always" ${typeVal === 'always' ? 'selected' : ''}>Always</option>
       </select>
       <input type="text" class="trigger-rule-pattern" placeholder="${typeVal === 'command' ? 'e.g. /jarvis or !ask' : typeVal === 'follow_up' ? 'e.g. 3' : typeVal === 'spontaneous' ? 'Freq: e.g. 2/day, 5/week, 10/month' : 'e.g. jarvis, ai'}" value="${esc(patternVal)}" style="flex:1; display:${(typeVal === 'command' || typeVal === 'keywords' || typeVal === 'follow_up' || typeVal === 'spontaneous') ? 'block' : 'none'}; font-size:12px;">
@@ -441,13 +441,13 @@ function toggleBotFormMode(targetMode) {
     syncClassicToWizardAll();
     if (wizView) wizView.style.display = 'block';
     if (classicView) classicView.style.display = 'none';
-    if (btnToggle) btnToggle.textContent = '⚡ Skip Tutorial (Classic Form)';
+    if (btnToggle) btnToggle.textContent = 'Skip Tutorial (Classic Form)';
     if (badge) { badge.textContent = 'Guided Tutorial'; badge.className = 'badge badge-provider'; }
   } else {
     syncWizardToClassicAll();
     if (wizView) wizView.style.display = 'none';
     if (classicView) classicView.style.display = 'block';
-    if (btnToggle) btnToggle.textContent = '✨ Guided Setup (Tutorial)';
+    if (btnToggle) btnToggle.textContent = 'Guided Setup (Tutorial)';
     if (badge) { badge.textContent = 'Classic Form'; badge.className = 'badge badge-offline'; }
   }
 }
