@@ -77,6 +77,8 @@ class TypingContext:
             try:
                 await self.task
             except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
 def _parse_frequency_interval(pattern: str) -> float:
     """Parses frequency string like '2/day', '5/week', '10/month' into seconds with random jitter."""
     import random
