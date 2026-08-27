@@ -1,11 +1,47 @@
 import datetime
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional, Tuple
+from app.core.config import settings
 from app.database.queries import (
     get_server_memories,
     get_user_memories,
     get_recent_messages,
-    get_recent_active_user_ids
+    get_recent_active_user_ids,
+    get_bot_last_messages_per_channel,
+    get_channels_activity_summary
 )
+
+def get_configured_timezone() -> datetime.tzinfo:
+    """Returns the configured ZoneInfo timezone or UTC fallback."""
+    tz_name = (getattr(settings, "TIMEZONE", None) or "UTC").strip()
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return datetime.timezone.utc
+
+def format_timestamp_for_context(ts_val: Any, target_tz: datetime.tzinfo) -> str:
+    """Formats a message timestamp (stored in UTC) into the target timezone for LLM prompt context."""
+    if not ts_val:
+        return ""
+    dt: Optional[datetime.datetime] = None
+    if isinstance(ts_val, str):
+        try:
+            cleaned = ts_val.replace('Z', '').split('+')[0]
+            dt = datetime.datetime.fromisoformat(cleaned)
+        except Exception:
+            return str(ts_val)[:19].replace('T', ' ')
+    elif isinstance(ts_val, datetime.datetime):
+        dt = ts_val
+    else:
+        return str(ts_val)
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    try:
+        local_dt = dt.astimezone(target_tz)
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 class ContextBuildResult:
     def __init__(
@@ -49,7 +85,10 @@ async def build_llm_context(
     bot_user_id: Optional[str] = None
 ) -> ContextBuildResult:
     """Builds the message payload and system prompt enriched with memories and lore."""
-    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    tz = get_configured_timezone()
+    now_local = datetime.datetime.now(tz)
+    tz_label = tz.key if hasattr(tz, "key") else getattr(settings, "TIMEZONE", "UTC")
+    now_str = now_local.strftime(f"%Y-%m-%d %H:%M:%S %Z ({tz_label})")
     
     # 1. Retrieve Server Lore and Memories for this Bot
     server_memories = await get_server_memories(bot_id=bot_id, guild_id=guild_id)
@@ -155,8 +194,8 @@ async def build_llm_context(
             (bot_user_id and m.get("author_id") == str(bot_user_id))
         )
         role = "assistant" if is_bot_msg else "user"
-        ts = str(m.get('timestamp', ''))[:19].replace('T', ' ')
-        ts_str = f"[{ts}] " if ts else ""
+        formatted_ts = format_timestamp_for_context(m.get('timestamp'), tz)
+        ts_str = f"[{formatted_ts}] " if formatted_ts else ""
         llm_messages.append({
             "role": role,
             "content": f"{ts_str}[{m.get('author_name', 'User')} - {m.get('author_id')}] (msg:{m.get('id', 'unknown')}): {m.get('content', '')}"
@@ -189,3 +228,122 @@ async def build_llm_context(
         injected_user_memories=user_memories,
         recent_history=recent_history
     )
+
+async def build_proactive_context(
+    bot_id: str,
+    system_prompt: str,
+    channel_id: str,
+    channel_name: str,
+    topic_guidance: Optional[str] = None,
+    guild_id: Optional[str] = None,
+    bot_user_id: Optional[str] = None,
+    bot_name: Optional[str] = None,
+    enabled_channels: Optional[List[str]] = None,
+    recent_messages_count: int = 15
+) -> ContextBuildResult:
+    """Builds a specialized context for spontaneous / proactive AI activation."""
+    tz = get_configured_timezone()
+    now_local = datetime.datetime.now(tz)
+    tz_label = tz.key if hasattr(tz, "key") else getattr(settings, "TIMEZONE", "UTC")
+    day_name = now_local.strftime("%A")
+    now_str = now_local.strftime(f"%Y-%m-%d %H:%M:%S %Z ({tz_label}) - {day_name}")
+    
+    # 1. Server Lore & Active User Memories
+    server_memories = await get_server_memories(bot_id=bot_id, guild_id=guild_id)
+    user_memories = await get_user_memories(bot_id=bot_id)
+    
+    # 2. Activity Overview & Bot's last messages across channels
+    bot_last_msgs = await get_bot_last_messages_per_channel(bot_author_id=bot_user_id, bot_id=bot_id)
+    channels_summary = await get_channels_activity_summary(channel_ids=enabled_channels)
+    
+    # 3. Build System Prompt Sections
+    system_sections = [
+        f"# BOT PERSONA & CORE IDENTITY\n{system_prompt.strip()}\nAlways embody this personality, tone of voice, character traits, quirks, and mannerisms in every message.",
+        f"# CONTEXT INFORMATION\n- Current Date and Time: {now_str}\n- Primary Channel Context: #{channel_name or 'general'} (ID: {channel_id})\n- Your Bot Handle: @{bot_name or 'Assistant'} (ID: {bot_user_id or bot_id})"
+    ]
+    
+    # Cross-Channel & Bot History section
+    overview_lines = []
+    if bot_last_msgs:
+        overview_lines.append("### Your Last Messages Across Channels:")
+        for bm in bot_last_msgs[:6]:
+            overview_lines.append(f"- #{bm.get('channel_name')} (ID: {bm.get('channel_id')}): {bm.get('elapsed')} (msg: \"{bm.get('content', '')[:80]}\")")
+    else:
+        overview_lines.append("### Your Last Messages Across Channels:\n- You have not posted any recent messages yet.")
+        
+    if channels_summary:
+        overview_lines.append("\n### Channel Activity Overview:")
+        for cs in channels_summary[:8]:
+            overview_lines.append(f"- #{cs.get('channel_name')} (ID: {cs.get('channel_id')}): Latest activity {cs.get('elapsed')} by @{cs.get('latest_author')}")
+            
+    system_sections.append("# SERVER & CROSS-CHANNEL OVERVIEW\n" + "\n".join(overview_lines))
+    
+    if server_memories:
+        mem_lines = [f"- [ID: {m.get('id')}] [{m.get('key_phrase')}]: {m.get('fact')} (Cat: {m.get('category', 'general')})" for m in server_memories]
+        system_sections.append("# SERVER LORE AND MEMORIES (GLOBAL FACTS)\n" + "\n".join(mem_lines))
+        
+    if user_memories:
+        user_mem_lines = []
+        for m in user_memories[:12]:
+            uid = str(m.get('user_id', ''))
+            tag = f"<@{uid}>" if uid.isdigit() else uid
+            user_mem_lines.append(f"- {tag} (@{m.get('username')}): {m.get('fact')}")
+        system_sections.append("# USER FACTS & SITUATIONS TO REMEMBER\n" + "\n".join(user_mem_lines))
+        
+    # Tool policy
+    system_sections.append(
+        "# TOOLS FOR INVESTIGATION & ACTIONS\n"
+        "You have access to tools to check other channels or search before deciding:\n"
+        "1. `get_channel_history(channel_id_or_name)`: Read recent messages from any other channel in the server to see what users are talking about.\n"
+        "2. `search_chat_history(query)`: Search past discussions across the server.\n"
+        "3. `send_message_to_channel(message_text, channel_id)`: Send a message directly to another channel if you find it more appropriate than the primary channel.\n"
+        "4. `web_search(query)`: Search online for real-time news or events."
+    )
+    
+    # Proactive Decision Directive
+    guidance_line = f"\n- OPERATIONAL GOAL / GUIDANCE: {topic_guidance.strip()}" if topic_guidance else ""
+    system_sections.append(
+        f"# PROACTIVE INITIATION & SILENCE DIRECTIVE (ai_choice){guidance_line}\n"
+        "You are evaluating an autonomous spontaneous interaction opportunity.\n"
+        "- PURPOSE: You may check in on a situation mentioned earlier, ask a user how a project/event went, start a relevant topic based on server lore or day of the week, or share a thoughtful insight.\n"
+        "- MULTI-CHANNEL FREEDOM: You are evaluating #{channel_name}, but you can inspect other channels with `get_channel_history` and write to them using `send_message_to_channel` if a topic there is more timely.\n"
+        "- CRITICAL DECISION RULE: If there is no genuine, natural, or timely reason to speak right now, or if it would feel forced/awkward, you MUST reply EXCLUSIVELY with the exact word '[REFUSE]'.\n"
+        "- If you choose to speak in #{channel_name}, output only your Discord message naturally in character without any extra meta-commentary."
+    )
+    
+    full_system_prompt = "\n\n".join(system_sections)
+    
+    # Recent history of the primary channel
+    recent_history = await get_recent_messages(channel_id=channel_id, limit=recent_messages_count)
+    
+    llm_messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": full_system_prompt}
+    ]
+    
+    for m in recent_history:
+        is_bot_msg = (
+            (m.get("author_id") == str(bot_id)) or
+            (bot_user_id and m.get("author_id") == str(bot_user_id))
+        )
+        role = "assistant" if is_bot_msg else "user"
+        formatted_ts = format_timestamp_for_context(m.get('timestamp'), tz)
+        ts_str = f"[{formatted_ts}] " if formatted_ts else ""
+        llm_messages.append({
+            "role": role,
+            "content": f"{ts_str}[{m.get('author_name', 'User')} - {m.get('author_id')}] (msg:{m.get('id', 'unknown')}): {m.get('content', '')}"
+        })
+        
+    # Trigger prompt
+    llm_messages.append({
+        "role": "user",
+        "content": f"[SYSTEM EVENT: Autonomous Proactive Opportunity at {now_str} in #{channel_name}] Evaluate current context, recent activity, and user facts. If you wish to post in #{channel_name}, provide your message. If another channel is better, use `send_message_to_channel`. If no interaction is needed now, reply '[REFUSE]'."
+    })
+    
+    return ContextBuildResult(
+        messages=llm_messages,
+        system_prompt=full_system_prompt,
+        injected_server_memories=server_memories,
+        injected_user_memories=user_memories,
+        recent_history=recent_history
+    )
+

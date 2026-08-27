@@ -19,7 +19,8 @@ from app.tools.discord_tools import (
     exec_get_channel_info,
     exec_get_user_info,
     exec_list_channel_members,
-    exec_send_message_to_channel
+    exec_send_message_to_channel,
+    exec_get_channel_history
 )
 
 AVAILABLE_TOOLS: List[Dict[str, Any]] = [
@@ -310,6 +311,28 @@ AVAILABLE_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "get_channel_history",
+            "description": "Retrieves recent conversation messages from a specific channel to inspect what users are currently discussing or catch up on context across other channels in the server.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id_or_name": {
+                        "type": "string",
+                        "description": "The channel numeric ID, mention (<#ID>), or exact channel name (e.g. 'general', 'dev')."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of recent messages to fetch (default 15, max 30).",
+                        "default": 15
+                    }
+                },
+                "required": ["channel_id_or_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_server_info",
             "description": "Retrieves server details, member count, role statistics, and the full list of available text channels with their numeric IDs.",
             "parameters": {
@@ -465,6 +488,12 @@ async def dispatch_tool_call(name: str, arguments: Dict[str, Any], context: Opti
             return await exec_send_message_to_channel(
                 message_text=arguments.get("message_text", ""),
                 channel_id=arguments.get("channel_id", ""),
+                discord_context=ctx
+            )
+        elif name == "get_channel_history":
+            return await exec_get_channel_history(
+                channel_id_or_name=arguments.get("channel_id_or_name", "") or ctx.get("channel_id", ""),
+                limit=int(arguments.get("limit", 15)),
                 discord_context=ctx
             )
         elif name == "get_server_info":

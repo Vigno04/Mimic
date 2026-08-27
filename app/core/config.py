@@ -13,6 +13,7 @@ class Settings:
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR / 'mimic.db'}")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "mimic_secret_key_default")
+    TIMEZONE: str = os.getenv("TIMEZONE", os.getenv("TZ", "UTC"))
     DATA_DIR: Path = DATA_DIR
 
 settings = Settings()

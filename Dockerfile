@@ -3,7 +3,8 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    APP_PORT=8000
+    APP_PORT=8000 \
+    TZ=UTC
 
 WORKDIR /app
 
@@ -11,6 +12,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     build-essential \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies

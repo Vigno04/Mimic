@@ -307,3 +307,70 @@ async def exec_list_channel_members(channel_id: Optional[str] = None, limit: int
             }
             
     return {"status": "error", "message": "Could not retrieve channel members from current context."}
+
+async def exec_get_channel_history(
+    channel_id_or_name: str,
+    limit: int = 15,
+    discord_context: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Retrieves recent chat messages from a specific channel to inspect ongoing discussions."""
+    limit = min(max(1, limit), 30)
+    
+    if discord_context:
+        guild = discord_context.get("guild") or (discord_context.get("message").guild if discord_context.get("message") else None)
+        target_channel = None
+        if guild:
+            target_channel, suggestions, available = _resolve_channel(guild, channel_id_or_name)
+            if not target_channel:
+                sug_str = f" Did you mean: {', '.join(suggestions)}." if suggestions else ""
+                return {
+                    "status": "error",
+                    "message": f"Channel '{channel_id_or_name}' not found.{sug_str} Available channels: {', '.join(available) if available else 'None'}."
+                }
+        elif discord_context.get("channel"):
+            target_channel = discord_context.get("channel")
+            
+        if target_channel and hasattr(target_channel, "history"):
+            try:
+                msgs = []
+                async for msg in target_channel.history(limit=limit):
+                    ts_str = msg.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                    msgs.append({
+                        "id": str(msg.id),
+                        "author": msg.author.display_name or msg.author.name,
+                        "author_id": str(msg.author.id),
+                        "is_bot": msg.author.bot,
+                        "content": msg.content,
+                        "timestamp": ts_str,
+                        "attachments": len(msg.attachments) > 0
+                    })
+                return {
+                    "status": "success",
+                    "channel_name": getattr(target_channel, "name", "channel"),
+                    "channel_id": str(target_channel.id),
+                    "count": len(msgs),
+                    "messages": list(reversed(msgs))  # Chronological order
+                }
+            except Exception:
+                pass
+
+    # Fallback to local DB queries
+    from app.database.queries import get_recent_messages
+    clean_id = str(channel_id_or_name).strip("<#> ")
+    db_msgs = await get_recent_messages(channel_id=clean_id, limit=limit)
+    return {
+        "status": "success",
+        "channel_id": clean_id,
+        "count": len(db_msgs),
+        "messages": [
+            {
+                "id": m.get("id"),
+                "author": m.get("author_name"),
+                "author_id": m.get("author_id"),
+                "content": m.get("content"),
+                "timestamp": str(m.get("timestamp", ""))[:19].replace('T', ' ')
+            }
+            for m in db_msgs
+        ]
+    }
+

@@ -15,7 +15,7 @@ from app.database.queries import (
     update_chat_message_reactions,
     upsert_discord_user
 )
-from app.core.context_builder import build_llm_context
+from app.core.context_builder import build_llm_context, build_proactive_context, get_configured_timezone
 from app.core.llm_client import execute_llm_with_fallback, clean_response_text
 from app.core.event_bus import event_bus, StreamEvent
 from app.bot.handlers import setup_slash_commands
@@ -77,7 +77,66 @@ class TypingContext:
             try:
                 await self.task
             except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+def _parse_frequency_interval(pattern: str) -> float:
+    """Parses frequency string like '2/day', '5/week', '10/month' into seconds with random jitter."""
+    import random
+    raw = (pattern or "").strip().lower()
+    interval = 86400.0
+    
+    if "/day" in raw or "/giorno" in raw or "/d" in raw:
+        num_str = raw.replace("/day", "").replace("/giorno", "").replace("/d", "").strip()
+        try:
+            n = float(num_str) if num_str else 1.0
+            interval = 86400.0 / max(0.1, n)
+        except ValueError:
+            interval = 86400.0
+    elif "/week" in raw or "/settimana" in raw or "/w" in raw:
+        num_str = raw.replace("/week", "").replace("/settimana", "").replace("/w", "").strip()
+        try:
+            n = float(num_str) if num_str else 1.0
+            interval = (7.0 * 86400.0) / max(0.1, n)
+        except ValueError:
+            interval = 7.0 * 86400.0
+    elif "/month" in raw or "/mese" in raw or "/m" in raw:
+        num_str = raw.replace("/month", "").replace("/mese", "").replace("/m", "").strip()
+        try:
+            n = float(num_str) if num_str else 1.0
+            interval = (30.0 * 86400.0) / max(0.1, n)
+        except ValueError:
+            interval = 30.0 * 86400.0
+    else:
+        try:
+            n = float(raw)
+            interval = 86400.0 / max(0.1, n)
+        except ValueError:
+            interval = 86400.0
+            
+    jitter = interval * random.uniform(-0.25, 0.25)
+    return max(180.0, interval + jitter)
+
+def _is_within_active_hours(active_hours_str: str) -> bool:
+    """Checks if the current local time falls within the configured active hours window (e.g. '09:00-22:00')."""
+    if not active_hours_str or "-" not in active_hours_str:
+        return True
+    try:
+        import datetime
+        from app.core.context_builder import get_configured_timezone
+        parts = active_hours_str.strip().split("-")
+        start_h, start_m = map(int, parts[0].strip().split(":"))
+        end_h, end_m = map(int, parts[1].strip().split(":"))
+        
+        tz = get_configured_timezone()
+        now = datetime.datetime.now(tz)
+        current_minutes = now.hour * 60 + now.minute
+        start_minutes = start_h * 60 + start_m
+        end_minutes = end_h * 60 + end_m
+        
+        if start_minutes <= end_minutes:
+            return start_minutes <= current_minutes <= end_minutes
+        else:
+            return current_minutes >= start_minutes or current_minutes <= end_minutes
+    except Exception:
+        return True
 
 class DiscordBotInstance:
     def __init__(self, config: Dict[str, Any]):
@@ -86,6 +145,9 @@ class DiscordBotInstance:
         self.user_cooldowns: Dict[str, float] = {}  # user_id -> last_timestamp
         self.consecutive_bot_replies: Dict[str, int] = {}  # channel_id -> count
         self.active_conversations: Dict[str, int] = {}  # channel_id -> messages_left
+        self.spontaneous_task: Optional[asyncio.Task] = None
+        self.spontaneous_last_run: Dict[str, float] = {}
+        self.spontaneous_intervals: Dict[str, float] = {}
         self.status = "stopped"
         self.last_error: Optional[str] = None
         
@@ -106,6 +168,7 @@ class DiscordBotInstance:
 
     def update_config(self, new_config: Dict[str, Any]):
         self.config = new_config
+        self._start_spontaneous_scheduler()
 
     def _register_events(self):
         @self.bot_client.event
@@ -113,6 +176,7 @@ class DiscordBotInstance:
             self.status = "running"
             self.last_error = None
             logger.info(f"Bot '{self.config.get('name')}' ({self.bot_client.user}) online and ready!")
+            self._start_spontaneous_scheduler()
             try:
                 synced = await self.bot_client.tree.sync()
                 logger.info(f"Bot '{self.config.get('name')}' synced {len(synced)} slash commands.")
@@ -589,3 +653,184 @@ class DiscordBotInstance:
                 )
             except Exception as inner_e:
                 logger.error(f"Failed to log audit error: {inner_e}")
+
+    def _start_spontaneous_scheduler(self):
+        """Starts or restarts the background proactive scheduler task."""
+        if self.spontaneous_task and not self.spontaneous_task.done():
+            self.spontaneous_task.cancel()
+        self.spontaneous_task = asyncio.create_task(self._spontaneous_scheduler_loop())
+
+    async def _spontaneous_scheduler_loop(self):
+        """Background loop evaluating spontaneous proactive opportunities."""
+        # Initial boot delay to let bot stabilize
+        await asyncio.sleep(45.0)
+        
+        while not self.bot_client.is_closed():
+            try:
+                triggers = self.config.get("triggers", [])
+                spontaneous_rules = [r for r in triggers if r.get("type") == "spontaneous"]
+                
+                if spontaneous_rules and self.status == "running":
+                    for rule in spontaneous_rules:
+                        try:
+                            await self._evaluate_spontaneous_rule(rule)
+                        except Exception as e:
+                            logger.error(f"Error evaluating spontaneous rule on bot {self.bot_id}: {e}", exc_info=True)
+                
+                # Check cycle every 2 minutes
+                await asyncio.sleep(120.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in spontaneous scheduler loop for bot {self.bot_id}: {e}")
+                await asyncio.sleep(60.0)
+
+    async def _evaluate_spontaneous_rule(self, rule: Dict[str, Any]):
+        pattern_str = rule.get("pattern", "1/day")
+        rule_key = f"{pattern_str}_{rule.get('channel_id', '')}_{rule.get('topic', '')}"
+        now = time.time()
+        
+        # Initialize tracking for new rule
+        if rule_key not in self.spontaneous_intervals:
+            self.spontaneous_intervals[rule_key] = _parse_frequency_interval(pattern_str)
+            self.spontaneous_last_run[rule_key] = now
+            return
+            
+        last_run = self.spontaneous_last_run.get(rule_key, 0)
+        target_interval = self.spontaneous_intervals.get(rule_key, 86400.0)
+        if (now - last_run) < target_interval:
+            return
+            
+        # Check active hours window
+        active_hours = rule.get("active_hours", "09:00-23:00")
+        if not _is_within_active_hours(active_hours):
+            return
+            
+        # Update run timestamp and compute next jittered interval
+        self.spontaneous_last_run[rule_key] = now
+        self.spontaneous_intervals[rule_key] = _parse_frequency_interval(pattern_str)
+        
+        # Resolve target channel
+        target_channel = None
+        channel_id_spec = rule.get("channel_id")
+        if channel_id_spec:
+            try:
+                target_channel = self.bot_client.get_channel(int(str(channel_id_spec).strip("<#> ")))
+            except Exception:
+                pass
+                
+        if not target_channel:
+            enabled_channels = self.config.get("enabled_channels", [])
+            for ch_id_str in enabled_channels:
+                try:
+                    ch = self.bot_client.get_channel(int(ch_id_str))
+                    if ch and hasattr(ch, "send"):
+                        target_channel = ch
+                        break
+                except Exception:
+                    pass
+                    
+        if not target_channel:
+            for guild in self.bot_client.guilds:
+                for ch in guild.text_channels:
+                    perms = ch.permissions_for(guild.me)
+                    if perms.send_messages and perms.view_channel:
+                        target_channel = ch
+                        break
+                if target_channel:
+                    break
+                    
+        if not target_channel:
+            logger.debug(f"Spontaneous check skipped for {self.config.get('name')}: no accessible text channel found.")
+            return
+
+        channel_id = str(target_channel.id)
+        channel_name = getattr(target_channel, "name", "general")
+        guild_id = str(target_channel.guild.id) if hasattr(target_channel, "guild") and target_channel.guild else None
+        
+        logger.info(f"Bot '{self.config.get('name')}' evaluating spontaneous opportunity in #{channel_name} (interval: {target_interval:.0f}s)...")
+        
+        # Build proactive context
+        context_result = await build_proactive_context(
+            bot_id=self.bot_id,
+            system_prompt=self.config.get("system_prompt", "You are an AI assistant on a Discord server."),
+            channel_id=channel_id,
+            channel_name=channel_name,
+            topic_guidance=rule.get("topic") or pattern_str,
+            guild_id=guild_id,
+            bot_user_id=str(self.bot_client.user.id) if self.bot_client.user else None,
+            bot_name=self.config.get("name", "Assistant"),
+            enabled_channels=self.config.get("enabled_channels", []),
+            recent_messages_count=self.config.get("recent_messages_count", 15)
+        )
+        
+        tool_context = {
+            "channel": target_channel,
+            "guild": target_channel.guild if hasattr(target_channel, "guild") else None,
+            "guild_id": guild_id,
+            "channel_id": channel_id,
+            "bot_id": self.bot_id,
+            "bot_user_id": str(self.bot_client.user.id) if self.bot_client.user else None
+        }
+        
+        request_id = event_bus.new_request_id()
+        await event_bus.publish(StreamEvent(
+            "stream_start",
+            {
+                "bot_id": self.bot_id,
+                "bot_name": self.config.get("name", "Unknown"),
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "trigger_type": "spontaneous"
+            },
+            request_id
+        ))
+        
+        llm_result = await execute_llm_with_fallback(
+            endpoint_ids=self.config.get("endpoint_chain", []),
+            messages=context_result.messages,
+            enable_tools=True,
+            context=tool_context,
+            stream=True,
+            request_id=request_id
+        )
+        
+        system_prompt_str = next((m["content"] for m in context_result.messages if m["role"] == "system"), "")
+        input_text_str = "\n".join([f"[{m['role']}] {m['content']}" for m in context_result.messages if m["role"] != "system"])
+        
+        clean_text = clean_response_text(llm_result.text)
+        is_refused = llm_result.refused or (clean_text == "[REFUSE]")
+        
+        await log_audit(
+            bot_id=self.bot_id,
+            user_id="spontaneous_trigger",
+            channel_id=channel_id,
+            model_used=llm_result.model_used,
+            prompt_tokens=llm_result.prompt_tokens,
+            completion_tokens=llm_result.completion_tokens,
+            total_tokens=llm_result.total_tokens,
+            tools_called=llm_result.tools_called,
+            refused=is_refused,
+            input_text=input_text_str,
+            output_text=clean_text if not is_refused else "[REFUSED] (Spontaneous AI Decision)",
+            error_message=llm_result.error,
+            system_prompt=system_prompt_str
+        )
+        
+        if is_refused or not clean_text:
+            logger.info(f"Bot '{self.config.get('name')}' evaluated spontaneous opportunity in #{channel_name} and chose to stay silent [REFUSE].")
+            return
+            
+        chunks = split_message(clean_text)
+        for chunk in chunks:
+            sent_msg = await target_channel.send(chunk)
+            await log_chat_message(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                author_id=str(self.bot_client.user.id),
+                author_name=self.config.get("name", "Assistant"),
+                content=chunk,
+                message_id=str(sent_msg.id)
+            )
+        logger.info(f"Bot '{self.config.get('name')}' sent spontaneous proactive message to #{channel_name}.")
+

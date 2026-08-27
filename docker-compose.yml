@@ -9,6 +9,8 @@ services:
       - APP_PORT=${APP_PORT:-8000}
       - DATABASE_URL=sqlite+aiosqlite:///data/mimic.db
       - SECRET_KEY=${SECRET_KEY:-mimic_secret_key_change_me}
+      - TIMEZONE=${TIMEZONE:-Europe/Rome}
+      - TZ=${TZ:-Europe/Rome}
     volumes:
       - ./data:/app/data
       - ./app:/app/app

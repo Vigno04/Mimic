@@ -153,6 +153,93 @@ async def get_recent_active_user_ids(channel_id: str, limit_users: int = 5, look
                 break
         return user_ids
 
+def format_time_elapsed(dt: Optional[datetime.datetime]) -> str:
+    if not dt:
+        return "never"
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+    delta = now - dt
+    seconds = max(0, int(delta.total_seconds()))
+    if seconds < 60:
+        return "just now"
+    elif seconds < 3600:
+        mins = seconds // 60
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    else:
+        days = seconds // 86400
+        return f"{days} day{'s' if days != 1 else ''} ago"
+
+async def get_bot_last_messages_per_channel(
+    bot_author_id: Optional[str] = None,
+    bot_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Retrieves the latest message the bot sent in each channel."""
+    if not bot_author_id and not bot_id:
+        return []
+        
+    author_ids = [str(a) for a in [bot_author_id, bot_id] if a]
+    async with AsyncSessionLocal() as session:
+        stmt = select(
+            ChatMessageModel.channel_id,
+            ChatMessageModel.channel_name,
+            ChatMessageModel.content,
+            ChatMessageModel.timestamp,
+            ChatMessageModel.id
+        ).where(
+            ChatMessageModel.author_id.in_(author_ids)
+        ).order_by(desc(ChatMessageModel.timestamp))
+        
+        res = await session.execute(stmt)
+        rows = res.all()
+        
+        seen_channels = set()
+        channel_results = []
+        for r in rows:
+            ch_id = r[0]
+            if ch_id not in seen_channels:
+                seen_channels.add(ch_id)
+                channel_results.append({
+                    "channel_id": ch_id,
+                    "channel_name": r[1] or "channel",
+                    "content": r[2],
+                    "timestamp": r[3].isoformat() if r[3] else None,
+                    "elapsed": format_time_elapsed(r[3]),
+                    "message_id": r[4]
+                })
+        return channel_results
+
+async def get_channels_activity_summary(channel_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Retrieves an activity summary for channels, including latest message and elapsed time."""
+    async with AsyncSessionLocal() as session:
+        stmt = select(ChatMessageModel).order_by(desc(ChatMessageModel.timestamp))
+        if channel_ids:
+            stmt = stmt.where(ChatMessageModel.channel_id.in_([str(c) for c in channel_ids]))
+        stmt = stmt.limit(200)
+        
+        res = await session.execute(stmt)
+        messages = res.scalars().all()
+        
+        seen_channels = set()
+        summary = []
+        for m in messages:
+            if m.channel_id not in seen_channels:
+                seen_channels.add(m.channel_id)
+                summary.append({
+                    "channel_id": m.channel_id,
+                    "channel_name": m.channel_name or "channel",
+                    "latest_author": m.author_name,
+                    "latest_author_id": m.author_id,
+                    "latest_content": m.content,
+                    "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+                    "elapsed": format_time_elapsed(m.timestamp)
+                })
+        return summary
+
+
 async def search_messages_fts(
     query: str,
     channel_id: Optional[str] = None,

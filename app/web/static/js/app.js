@@ -216,6 +216,8 @@ async function loadBots() {
         else if (t.type === 'keywords') label = t.pattern ? `"${t.pattern}"` : 'keywords';
         else if (t.type === 'mention') label = `@${b.name}`;
         else if (t.type === 'reply_to_bot' || t.type === 'reply') label = `Reply to ${b.name}`;
+        else if (t.type === 'follow_up') label = `Follow up (${t.pattern || 3} msgs)`;
+        else if (t.type === 'spontaneous') label = `⚡ Spontaneous (${t.pattern || '1/day'})`;
         else if (t.type === 'always') label = `always`;
 
         const polBadge = t.reply_policy === 'mandatory'
@@ -306,7 +308,9 @@ function getTriggersFromContainer(containerId) {
     type: row.querySelector('.trigger-rule-type')?.value || 'keywords',
     pattern: row.querySelector('.trigger-rule-pattern')?.value?.trim() || '',
     case_sensitive: row.querySelector('.trigger-rule-case')?.checked || false,
-    reply_policy: row.querySelector('.trigger-rule-policy')?.value || 'ai_choice'
+    reply_policy: row.querySelector('.trigger-rule-policy')?.value || 'ai_choice',
+    active_hours: row.querySelector('.trigger-rule-hours')?.value?.trim() || '09:00-23:00',
+    topic: row.querySelector('.trigger-rule-topic')?.value?.trim() || ''
   }));
 }
 
@@ -335,20 +339,33 @@ function addTriggerRuleRow(rule = {}, containerOrId = null) {
   const typeVal = rule.type || 'keywords';
   const patternVal = rule.pattern !== undefined ? rule.pattern : '';
   const caseVal = !!rule.case_sensitive;
-  const policyVal = rule.reply_policy || 'ai_choice';
+  const policyVal = rule.reply_policy || (typeVal === 'spontaneous' ? 'ai_choice' : 'ai_choice');
+  const hoursVal = rule.active_hours || '09:00-23:00';
+  const topicVal = rule.topic || '';
 
   row.innerHTML = `
     <div class="trigger-rule-header">
-      <select class="trigger-rule-type" style="width:160px;" onchange="onTriggerRuleTypeChange(this)">
+      <select class="trigger-rule-type" style="width:170px;" onchange="onTriggerRuleTypeChange(this)">
         <option value="command" ${typeVal === 'command' ? 'selected' : ''}>Command (/)</option>
         <option value="reply_to_bot" ${typeVal === 'reply_to_bot' || typeVal === 'reply' ? 'selected' : ''}>Reply to Bot</option>
         <option value="keywords" ${typeVal === 'keywords' ? 'selected' : ''}>Keywords</option>
         <option value="mention" ${typeVal === 'mention' ? 'selected' : ''}>@Mention</option>
         <option value="follow_up" ${typeVal === 'follow_up' ? 'selected' : ''}>Follow Up (Conversation)</option>
+        <option value="spontaneous" ${typeVal === 'spontaneous' ? 'selected' : ''}>⚡ Spontaneous / Proactive</option>
         <option value="always" ${typeVal === 'always' ? 'selected' : ''}>Always</option>
       </select>
-      <input type="text" class="trigger-rule-pattern" placeholder="${typeVal === 'command' ? 'e.g. /jarvis or !ask' : typeVal === 'follow_up' ? 'e.g. 3' : 'e.g. jarvis, ai'}" value="${esc(patternVal)}" style="flex:1; display:${(typeVal === 'command' || typeVal === 'keywords' || typeVal === 'follow_up') ? 'block' : 'none'}; font-size:12px;">
+      <input type="text" class="trigger-rule-pattern" placeholder="${typeVal === 'command' ? 'e.g. /jarvis or !ask' : typeVal === 'follow_up' ? 'e.g. 3' : typeVal === 'spontaneous' ? 'Freq: e.g. 2/day, 5/week, 10/month' : 'e.g. jarvis, ai'}" value="${esc(patternVal)}" style="flex:1; display:${(typeVal === 'command' || typeVal === 'keywords' || typeVal === 'follow_up' || typeVal === 'spontaneous') ? 'block' : 'none'}; font-size:12px;">
       <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.trigger-rule-row').remove()" style="padding:4px 8px;">✕</button>
+    </div>
+    <div class="trigger-rule-spontaneous-fields" style="display:${typeVal === 'spontaneous' ? 'flex' : 'none'}; flex-wrap:wrap; gap:8px; margin-top:6px; padding:6px; background:var(--bg-1, #18181b); border-radius:4px; font-size:11px;">
+      <div style="display:flex; align-items:center; gap:4px;">
+        <span style="color:var(--text-2);">Active hours:</span>
+        <input type="text" class="trigger-rule-hours" placeholder="09:00-23:00" value="${esc(hoursVal)}" style="width:95px; font-size:11px; padding:2px 4px;">
+      </div>
+      <div style="display:flex; align-items:center; gap:4px; flex:1;">
+        <span style="color:var(--text-2);">Topic/Goal:</span>
+        <input type="text" class="trigger-rule-topic" placeholder="e.g. Follow up on project updates or ask how day went" value="${esc(topicVal)}" style="flex:1; font-size:11px; padding:2px 4px;">
+      </div>
     </div>
     <div class="trigger-rule-footer">
       <label class="checkbox-label trigger-rule-case-label" style="display:${typeVal === 'keywords' ? 'flex' : 'none'};">
@@ -358,8 +375,8 @@ function addTriggerRuleRow(rule = {}, containerOrId = null) {
       <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
         <span style="font-size:11px; color:var(--text-2);">Reply policy:</span>
         <select class="trigger-rule-policy" style="font-size:12px; padding:3px 6px;">
-          <option value="mandatory" ${policyVal === 'mandatory' ? 'selected' : ''}>Mandatory (Risponde sempre)</option>
           <option value="ai_choice" ${policyVal === 'ai_choice' ? 'selected' : ''}>AI Choice (Può rifiutare [REFUSE])</option>
+          <option value="mandatory" ${policyVal === 'mandatory' ? 'selected' : ''}>Mandatory (Invia sempre)</option>
           <option value="passive" ${policyVal === 'passive' ? 'selected' : ''}>Passive (Solo log)</option>
         </select>
       </div>
@@ -373,6 +390,12 @@ function onTriggerRuleTypeChange(selectEl) {
   const type = selectEl.value;
   const patternInput = row.querySelector('.trigger-rule-pattern');
   const caseLabel = row.querySelector('.trigger-rule-case-label');
+  const spontaneousFields = row.querySelector('.trigger-rule-spontaneous-fields');
+
+  if (spontaneousFields) {
+    spontaneousFields.style.display = (type === 'spontaneous') ? 'flex' : 'none';
+  }
+
   if (type === 'command') {
     patternInput.style.display = 'block';
     patternInput.placeholder = 'e.g. /jarvis or !ask';
@@ -384,6 +407,10 @@ function onTriggerRuleTypeChange(selectEl) {
   } else if (type === 'follow_up') {
     patternInput.style.display = 'block';
     patternInput.placeholder = 'e.g. 3 (number of messages)';
+    caseLabel.style.display = 'none';
+  } else if (type === 'spontaneous') {
+    patternInput.style.display = 'block';
+    patternInput.placeholder = 'Freq: e.g. 2/day, 5/week, 10/month';
     caseLabel.style.display = 'none';
   } else {
     patternInput.style.display = 'none';
