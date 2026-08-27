@@ -122,8 +122,8 @@ async def build_llm_context(
         user_mem_lines = []
         for m in user_memories:
             uid = str(m.get('user_id', ''))
-            tag = f"<@{uid}>" if uid.isdigit() else uid
-            user_mem_lines.append(f"- [ID: {m.get('id')}] {tag} (@{m.get('username')}): {m.get('fact')} [Cat: {m.get('category', 'general')}]")
+            uname = m.get('display_name') or m.get('username') or uid
+            user_mem_lines.append(f"- [ID: {m.get('id')}] User {uname} (@{m.get('username')}, ID: {uid}): {m.get('fact')} [Cat: {m.get('category', 'general')}]")
         system_sections.append("# MEMORIES ABOUT ACTIVE USERS\n" + "\n".join(user_mem_lines))
         
     # Tools and Action Policy (Inspired by DeepSeek Harness Agent Design)
@@ -162,13 +162,13 @@ async def build_llm_context(
             "Always reply to the user's message."
         )
         
-    # Formatting Standards
+    # Formatting & Mention Standards
     system_sections.append(
-        "# DISCORD FORMATTING STANDARDS\n"
-        "- USER TAGS: To tag or mention a user, use the Discord format `<@NUMERIC_ID>` (e.g. `<@123456789>`).\n"
-        "  * You can find a user's NUMERIC_ID next to their name in the chat history (format: `[Username - NUMERIC_ID]`).\n"
-        "  * If you need to tag someone who hasn't spoken recently, use the `list_channel_members` tool to find their ID.\n"
-        "  * NEVER write `<@Username>`.\n"
+        "# CONVERSATION TONE & USER MENTIONS RULE\n"
+        "- NATURAL ADDRESSING (DEFAULT): Speak to users naturally using their name or display name (e.g. 'Hey Alex', 'Good point Marco').\n"
+        "- DO NOT OVERUSE PINGS: You are already replying in the channel/thread. Do NOT start your message with `<@ID>` or ping users repeatedly. Talk to them directly.\n"
+        "- WHEN TO PING (`<@NUMERIC_ID>`): ONLY use `<@NUMERIC_ID>` if you genuinely need to notify an absent member who is not in the recent conversation (e.g. 'We should ask <@123456789> about that').\n"
+        "- NEVER write `<@Username>` (Discord only accepts numeric IDs like `<@123456789>`).\n"
         "- MESSAGE REFERENCE: Use `msg:MESSAGE_ID` to reference a specific message."
     )
     
@@ -286,8 +286,8 @@ async def build_proactive_context(
         user_mem_lines = []
         for m in user_memories[:12]:
             uid = str(m.get('user_id', ''))
-            tag = f"<@{uid}>" if uid.isdigit() else uid
-            user_mem_lines.append(f"- {tag} (@{m.get('username')}): {m.get('fact')}")
+            uname = m.get('display_name') or m.get('username') or uid
+            user_mem_lines.append(f"- User {uname} (@{m.get('username')}, ID: {uid}): {m.get('fact')}")
         system_sections.append("# USER FACTS & SITUATIONS TO REMEMBER\n" + "\n".join(user_mem_lines))
         
     # Tool policy
