@@ -665,7 +665,7 @@ class DiscordBotInstance:
     async def _spontaneous_scheduler_loop(self):
         """Background loop evaluating spontaneous proactive opportunities."""
         # Initial boot delay to let bot stabilize
-        await asyncio.sleep(45.0)
+        await asyncio.sleep(2.0)
         
         while not self.bot_client.is_closed():
             try:
