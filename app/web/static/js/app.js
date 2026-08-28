@@ -246,6 +246,7 @@ async function loadBots() {
           </div>
           <div class="card-detail-row"><span>Memory</span><span>${b.memory_mode}</span></div>
           <div class="card-detail-row"><span>Cooldown</span><span>${b.cooldown_seconds}s</span></div>
+          ${b.live_status?.next_auto_msg ? `<div class="card-detail-row"><span>Next Auto Msg</span><span>${esc(b.live_status.next_auto_msg)}</span></div>` : ''}
           ${b.live_status?.last_error ? `
             <div class="bot-error-banner">
               <div style="font-size:11px; font-weight:600; color:var(--red); display:flex; align-items:center; gap:4px; margin-bottom:2px;">

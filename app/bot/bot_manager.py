@@ -129,11 +129,42 @@ class MultiBotManager:
         instance = self.active_instances.get(bot_id)
         if not instance:
             return {"status": "stopped", "online": False}
+            
+        # Calculate time to next spontaneous message
+        import time
+        next_auto_msg = None
+        spontaneous_rules = [r for r in instance.config.get("triggers", []) if r.get("type") == "spontaneous"]
+        if spontaneous_rules:
+            now = time.time()
+            next_times = []
+            for rule in spontaneous_rules:
+                pattern_str = rule.get("pattern", "1/day")
+                rule_key = f"{pattern_str}_{rule.get('channel_id', '')}_{rule.get('topic', '')}"
+                
+                last_run = instance.spontaneous_last_run.get(rule_key)
+                interval = instance.spontaneous_intervals.get(rule_key)
+                
+                if last_run is not None and interval is not None:
+                    next_times.append(last_run + interval)
+            
+            if next_times:
+                closest = min(next_times)
+                diff = closest - now
+                if diff <= 0:
+                    next_auto_msg = "Imminent"
+                else:
+                    hours, rem = divmod(diff, 3600)
+                    minutes, _ = divmod(rem, 60)
+                    next_auto_msg = f"{int(hours)}h {int(minutes)}m"
+            else:
+                next_auto_msg = "Initializing..."
+                
         return {
             "status": instance.status,
             "online": instance.status == "running",
             "last_error": instance.last_error,
-            "user": str(instance.bot_client.user) if instance.bot_client.user else None
+            "user": str(instance.bot_client.user) if instance.bot_client.user else None,
+            "next_auto_msg": next_auto_msg
         }
 
     async def start_all_enabled_bots(self):
