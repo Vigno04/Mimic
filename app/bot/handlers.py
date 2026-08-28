@@ -71,6 +71,8 @@ def setup_slash_commands(bot_instance: "DiscordBotInstance"):
                     minutes, _ = divmod(rem, 60)
                     time_val = f"`{int(hours)}h {int(minutes)}m`"
                 embed.add_field(name="Next Auto Msg", value=time_val, inline=True)
+            else:
+                embed.add_field(name="Next Auto Msg", value="`Initializing...`", inline=True)
                 
         embed.set_footer(text="Mimic")
         
