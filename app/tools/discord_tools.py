@@ -374,3 +374,132 @@ async def exec_get_channel_history(
         ]
     }
 
+
+async def exec_fetch_message_media(
+    message_id: str,
+    channel_id: Optional[str] = None,
+    discord_context: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Fetches fresh image/media data from a Discord message by its ID.
+    Returns base64 data URIs for all visual attachments and stickers found.
+    The data URIs are embedded in a special '__vision_urls__' key so the
+    tool dispatcher can inject them as image content into the LLM context.
+    """
+    import base64
+    import httpx
+
+    if not discord_context:
+        return {"status": "error", "message": "Discord context not available."}
+
+    guild = discord_context.get("guild") or (
+        discord_context.get("message").guild if discord_context.get("message") else None
+    )
+    channel = discord_context.get("channel")
+
+    # Resolve target channel
+    if channel_id and guild:
+        found, _, _ = _resolve_channel(guild, channel_id)
+        if found:
+            channel = found
+
+    if not channel:
+        return {"status": "error", "message": "Could not resolve channel to fetch message from."}
+
+    # Clean message_id (strip 'msg:' prefix if present)
+    clean_msg_id = str(message_id).strip().lstrip("msg:").strip()
+    if not clean_msg_id.isdigit():
+        return {"status": "error", "message": f"Invalid message ID: '{message_id}'. Must be a numeric Discord message ID."}
+
+    try:
+        discord_msg = await channel.fetch_message(int(clean_msg_id))
+    except Exception as e:
+        return {"status": "error", "message": f"Could not fetch message {clean_msg_id}: {str(e)}"}
+
+    vision_urls = []   # data URIs for LLM vision
+    media_descriptions = []
+
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as http:
+
+        # 1. Regular image attachments
+        for att in discord_msg.attachments:
+            is_visual = (
+                (att.content_type and att.content_type.startswith("image/")) or
+                any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"])
+            )
+            if is_visual:
+                try:
+                    r = await http.get(att.url)
+                    if r.status_code == 200:
+                        ext = att.filename.lower().rsplit(".", 1)[-1] if "." in att.filename else "png"
+                        ct = att.content_type or ""
+                        if "gif" in ct or ext == "gif":
+                            mime = "image/gif"
+                        elif "jpeg" in ct or ext in ("jpg", "jpeg"):
+                            mime = "image/jpeg"
+                        elif "webp" in ct or ext == "webp":
+                            mime = "image/webp"
+                        else:
+                            mime = "image/png"
+                        b64 = base64.b64encode(r.content).decode("utf-8")
+                        vision_urls.append(f"data:{mime};base64,{b64}")
+                        media_descriptions.append(f"Attachment: {att.filename} ({mime})")
+                    else:
+                        media_descriptions.append(f"Attachment {att.filename}: HTTP {r.status_code} - URL may have expired.")
+                except Exception as e:
+                    media_descriptions.append(f"Attachment {att.filename}: download error - {str(e)}")
+
+        # 2. Stickers (Discord CDN URLs for stickers are permanent)
+        for sticker in discord_msg.stickers:
+            cdn_gif = f"https://media.discordapp.net/stickers/{sticker.id}.gif"
+            cdn_png = f"https://media.discordapp.net/stickers/{sticker.id}.png"
+            downloaded = False
+            for cdn_url, mime in [(cdn_gif, "image/gif"), (cdn_png, "image/png")]:
+                try:
+                    r = await http.get(cdn_url)
+                    if r.status_code == 200:
+                        b64 = base64.b64encode(r.content).decode("utf-8")
+                        vision_urls.append(f"data:{mime};base64,{b64}")
+                        media_descriptions.append(f"Sticker: {sticker.name} ({mime})")
+                        downloaded = True
+                        break
+                except Exception:
+                    pass
+            if not downloaded:
+                media_descriptions.append(f"Sticker {sticker.name}: could not download from CDN.")
+
+        # 3. Embeds with images
+        for embed in discord_msg.embeds:
+            embed_url = None
+            if embed.image and embed.image.url:
+                embed_url = embed.image.url
+            elif embed.thumbnail and embed.thumbnail.url:
+                embed_url = embed.thumbnail.url
+            if embed_url:
+                try:
+                    r = await http.get(embed_url)
+                    if r.status_code == 200:
+                        ct = r.headers.get("content-type", "image/png")
+                        mime = ct.split(";")[0].strip() if "image/" in ct else "image/png"
+                        b64 = base64.b64encode(r.content).decode("utf-8")
+                        vision_urls.append(f"data:{mime};base64,{b64}")
+                        media_descriptions.append(f"Embed image from message {clean_msg_id} ({mime})")
+                except Exception as e:
+                    media_descriptions.append(f"Embed image: download error - {str(e)}")
+
+    if not vision_urls and not media_descriptions:
+        return {
+            "status": "no_media",
+            "message": f"Message {clean_msg_id} has no visual attachments (images, stickers, or embedded images).",
+            "message_content": discord_msg.content or "(no text)"
+        }
+
+    return {
+        "status": "success",
+        "message_id": clean_msg_id,
+        "message_content": discord_msg.content or "(no text)",
+        "media_count": len(vision_urls),
+        "media_descriptions": media_descriptions,
+        # Special key: the tool dispatcher will inject these as image_url parts
+        "__vision_urls__": vision_urls
+    }

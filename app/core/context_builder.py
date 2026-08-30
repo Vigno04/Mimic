@@ -144,7 +144,11 @@ async def build_llm_context(
         "4. DISCORD ACTIONS:\n"
         "   - `add_reaction`: Add emoji reactions to express emotion or acknowledge messages naturally.\n"
         "   - `list_channel_members`: Find member IDs or usernames when you need to tag someone who hasn't spoken recently.\n"
-        "   - `send_bot_command`: Send prefix commands to interact with other Discord bots (e.g. `!play <song>`, `?help`)."
+        "   - `send_bot_command`: Send prefix commands to interact with other Discord bots (e.g. `!play <song>`, `?help`).\n\n"
+        "5. VISUAL MEDIA RECALL (`fetch_message_media`):\n"
+        "   - Use `fetch_message_media(message_id)` whenever a user refers to a past message that contained an image, GIF, or sticker and you need to see/analyze it.\n"
+        "   - Message IDs are shown in the chat history as `msg:ID` (e.g. `msg:1234567890`). Pass only the numeric ID.\n"
+        "   - NEVER claim you cannot see a historical image without first calling this tool. Proactively call it when visual content from a past message is relevant."
     )
         
     # Reply Policy & Intelligent Silence [REFUSE]
@@ -196,10 +200,17 @@ async def build_llm_context(
         role = "assistant" if is_bot_msg else "user"
         formatted_ts = format_timestamp_for_context(m.get('timestamp'), tz)
         ts_str = f"[{formatted_ts}] " if formatted_ts else ""
-        llm_messages.append({
-            "role": role,
-            "content": f"{ts_str}[{m.get('author_name', 'User')} - {m.get('author_id')}] (msg:{m.get('id', 'unknown')}): {m.get('content', '')}"
-        })
+        text_str = f"{ts_str}[{m.get('author_name', 'User')} - {m.get('author_id')}] (msg:{m.get('id', 'unknown')}): {m.get('content', '')}"
+        
+        hist_attachment_urls = m.get("attachment_urls", [])
+        if hist_attachment_urls and role == "user":
+            # Build multipart content for historical messages that had media
+            hist_parts: List[Dict[str, Any]] = [{"type": "text", "text": text_str}]
+            for cdn_url in hist_attachment_urls:
+                hist_parts.append({"type": "image_url", "image_url": {"url": cdn_url}})
+            llm_messages.append({"role": role, "content": hist_parts})
+        else:
+            llm_messages.append({"role": role, "content": text_str})
         
     # Build current message (with Vision if attachments are present)
     current_content: Any = current_message

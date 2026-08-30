@@ -180,6 +180,87 @@ async def _call_single_endpoint(
             return await _call_openai_compatible_stream(endpoint, base_url, api_key, model_name, messages, active_tools, context, max_tokens, request_id, max_iterations=context.get("max_iterations", 6) if context else 6)
         return await _call_openai_compatible(endpoint, base_url, api_key, model_name, messages, active_tools, context, max_tokens, max_iterations=context.get("max_iterations", 6) if context else 6)
 
+def convert_to_responses_payload(payload: dict) -> dict:
+    """
+    Convert Chat Completions payload to Responses API format (matching OpenWebUI standard).
+    Chat Completions: { messages: [{role, content: [{type: 'text'|'image_url', ...}]}], ... }
+    Responses API:    { input: [{type: 'message', role, content: [{type: 'input_text'|'input_image', ...}]}], instructions: "..." }
+    """
+    messages = list(payload.pop('messages', []))
+    system_content = ''
+    input_items = []
+
+    for msg in messages:
+        role = msg.get('role', 'user')
+        content = msg.get('content', '')
+
+        if role == 'system':
+            if isinstance(content, str):
+                system_content = content
+            elif isinstance(content, list):
+                system_content = '\n'.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') in ('text', 'input_text'))
+            continue
+            
+        if role == 'tool':
+            input_items.append({
+                'type': 'function_call_output',
+                'call_id': msg.get('tool_call_id', ''),
+                'output': str(content)
+            })
+            continue
+
+        if role == 'assistant' and msg.get('tool_calls'):
+            if content:
+                input_items.append({
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': str(content)}]
+                })
+            for tc in msg.get('tool_calls', []):
+                input_items.append({
+                    'type': 'function_call',
+                    'id': tc.get('id', ''),
+                    'name': tc.get('function', {}).get('name', ''),
+                    'arguments': tc.get('function', {}).get('arguments', '{}')
+                })
+            continue
+
+        text_type = 'output_text' if role == 'assistant' else 'input_text'
+
+        if isinstance(content, str):
+            content_parts = [{'type': text_type, 'text': content}]
+        elif isinstance(content, list):
+            content_parts = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                p_type = part.get('type')
+                if p_type in ('text', 'input_text'):
+                    content_parts.append({'type': text_type, 'text': part.get('text', '')})
+                elif p_type in ('image_url', 'input_image'):
+                    url_data = part.get('image_url', {})
+                    if isinstance(url_data, dict):
+                        url = url_data.get('url', '')
+                        detail = url_data.get('detail') or 'auto'
+                    else:
+                        url = url_data if isinstance(url_data, str) else ''
+                        detail = 'auto'
+                    content_parts.append({'type': 'input_image', 'image_url': url, 'detail': detail})
+        else:
+            content_parts = [{'type': text_type, 'text': str(content)}]
+
+        input_items.append({'type': 'message', 'role': role, 'content': content_parts})
+
+    responses_payload = {**payload, 'input': input_items}
+    if system_content:
+        responses_payload['instructions'] = system_content
+
+    if 'max_tokens' in responses_payload:
+        responses_payload['max_output_tokens'] = responses_payload.pop('max_tokens')
+
+    return responses_payload
+
+
 async def _call_openai_compatible(
     endpoint: EndpointModel,
     base_url: str,
@@ -197,8 +278,9 @@ async def _call_openai_compatible(
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-        
-    url = f"{base_url}/chat/completions"
+    url_path = "/responses" if getattr(endpoint, "endpoint_standard", "completions") == "responses" else "/chat/completions"
+    url = f"{base_url}{url_path}"
+    is_responses = getattr(endpoint, "endpoint_standard", "completions") == "responses"
     current_messages = list(messages)
     tools_executed: List[Dict[str, Any]] = []
     total_prompt_tokens = 0
@@ -209,16 +291,27 @@ async def _call_openai_compatible(
     async with httpx.AsyncClient(timeout=180.0) as client:
         while iteration < max_iterations:
             iteration += 1
-            payload: Dict[str, Any] = {
-                "model": model_name,
-                "messages": current_messages,
-                "temperature": 0.7
-            }
-            if max_tokens is not None:
-                payload["max_tokens"] = max_tokens
-            if tools:
-                payload["tools"] = tools
-                payload["tool_choice"] = "auto"
+            if is_responses:
+                base_p = {
+                    "model": model_name,
+                    "messages": current_messages
+                }
+                if max_tokens is not None:
+                    base_p["max_tokens"] = max_tokens
+                if tools:
+                    base_p["tools"] = tools
+                payload = convert_to_responses_payload(base_p)
+            else:
+                payload = {
+                    "model": model_name,
+                    "messages": current_messages,
+                    "temperature": 0.7
+                }
+                if max_tokens is not None:
+                    payload["max_tokens"] = max_tokens
+                if tools:
+                    payload["tools"] = tools
+                    payload["tool_choice"] = "auto"
                 
             try:
                 resp = await client.post(url, json=payload, headers=headers)
@@ -237,10 +330,42 @@ async def _call_openai_compatible(
                 total_prompt_tokens += usage.get("prompt_tokens", 0)
                 total_completion_tokens += usage.get("completion_tokens", 0)
                 
-                choice = data["choices"][0]
-                message_obj = choice.get("message", {})
-                content = message_obj.get("content") or ""
-                tool_calls = message_obj.get("tool_calls", [])
+                content = ""
+                tool_calls = []
+                
+                if "output" in data and isinstance(data["output"], list):
+                    for item in data["output"]:
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = item.get("type")
+                        if item_type == "message":
+                            msg_content = item.get("content", "")
+                            if isinstance(msg_content, str):
+                                content += msg_content
+                            elif isinstance(msg_content, list):
+                                for part in msg_content:
+                                    if isinstance(part, str):
+                                        content += part
+                                    elif isinstance(part, dict):
+                                        if part.get("type") in ("output_text", "text"):
+                                            content += part.get("text", "")
+                            if "tool_calls" in item and isinstance(item["tool_calls"], list):
+                                tool_calls.extend(item["tool_calls"])
+                        elif item_type in ("function_call", "tool_call"):
+                            tool_calls.append({
+                                "id": item.get("id", f"call_{len(tool_calls)}"),
+                                "function": {
+                                    "name": item.get("name") or item.get("function", {}).get("name"),
+                                    "arguments": item.get("arguments") or item.get("function", {}).get("arguments", "{}")
+                                }
+                            })
+                elif "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+                    choice = data["choices"][0]
+                    message_obj = choice.get("message", {})
+                    content = message_obj.get("content") or ""
+                    tool_calls = message_obj.get("tool_calls", [])
+                else:
+                    content = data.get("text", "") or str(data)
                 
                 # Check if there are tool calls to execute
                 if tool_calls and tools:
@@ -273,12 +398,23 @@ async def _call_openai_compatible(
                         })
                         
                         # Add tool response to messages
+                        tool_result_for_msg = {k: v for k, v in tool_result.items() if k != "__vision_urls__"} if isinstance(tool_result, dict) else tool_result
                         current_messages.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", f"call_{len(tools_executed)}"),
                             "name": func_name,
-                            "content": json.dumps(tool_result, ensure_ascii=False, default=str)
+                            "content": json.dumps(tool_result_for_msg, ensure_ascii=False, default=str)
                         })
+                        
+                        # If the tool returned vision data, inject as a user message with image_url parts
+                        vision_urls_from_tool = tool_result.get("__vision_urls__", []) if isinstance(tool_result, dict) else []
+                        if vision_urls_from_tool:
+                            vision_parts: List[Dict[str, Any]] = [
+                                {"type": "text", "text": f"[Vision content loaded from message {tool_result.get('message_id', '?')}:]"}
+                            ]
+                            for v_url in vision_urls_from_tool:
+                                vision_parts.append({"type": "image_url", "image_url": {"url": v_url}})
+                            current_messages.append({"role": "user", "content": vision_parts})
                         
                     # Continue loop to get assistant's follow-up message after tool execution
                     continue
@@ -344,8 +480,9 @@ async def _call_openai_compatible_stream(
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-        
-    url = f"{base_url}/chat/completions"
+    url_path = "/responses" if getattr(endpoint, "endpoint_standard", "completions") == "responses" else "/chat/completions"
+    url = f"{base_url}{url_path}"
+    is_responses = getattr(endpoint, "endpoint_standard", "completions") == "responses"
     current_messages = list(messages)
     tools_executed: List[Dict[str, Any]] = []
     total_prompt_tokens = 0
@@ -356,17 +493,31 @@ async def _call_openai_compatible_stream(
     async with httpx.AsyncClient(timeout=300.0) as client:
         while iteration < max_iterations:
             iteration += 1
-            payload: Dict[str, Any] = {
-                "model": model_name,
-                "messages": current_messages,
-                "temperature": 0.7,
-                "stream": True
-            }
-            if max_tokens is not None:
-                payload["max_tokens"] = max_tokens
-            if tools:
-                payload["tools"] = tools
-                payload["tool_choice"] = "auto"
+            if is_responses:
+                base_p = {
+                    "model": model_name,
+                    "messages": current_messages,
+                    "stream": True,
+                    "stream_options": {"include_usage": True}
+                }
+                if max_tokens is not None:
+                    base_p["max_tokens"] = max_tokens
+                if tools:
+                    base_p["tools"] = tools
+                payload = convert_to_responses_payload(base_p)
+            else:
+                payload = {
+                    "model": model_name,
+                    "messages": current_messages,
+                    "temperature": 0.7,
+                    "stream": True,
+                    "stream_options": {"include_usage": True}
+                }
+                if max_tokens is not None:
+                    payload["max_tokens"] = max_tokens
+                if tools:
+                    payload["tools"] = tools
+                    payload["tool_choice"] = "auto"
                 
             try:
                 # Publish waiting_for_response event
@@ -415,22 +566,76 @@ async def _call_openai_compatible_stream(
                             continue
                             
                         # Extract usage if provided in stream chunks
-                        usage = chunk_data.get("usage")
+                        usage = chunk_data.get("usage") or chunk_data.get("response", {}).get("usage")
                         if usage:
-                            total_prompt_tokens = usage.get("prompt_tokens", total_prompt_tokens)
-                            total_completion_tokens = usage.get("completion_tokens", total_completion_tokens)
+                            total_prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or total_prompt_tokens
+                            total_completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens") or total_completion_tokens
+                        
+                        content_delta = None
+                        reasoning_chunk = None
+                        delta = {}
                         
                         choices = chunk_data.get("choices", [])
-                        if not choices:
-                            continue
+                        if choices and isinstance(choices, list) and len(choices) > 0:
+                            delta = choices[0].get("delta", {})
+                            chunk_finish = choices[0].get("finish_reason")
+                            if chunk_finish:
+                                finish_reason = chunk_finish
+                            reasoning_chunk = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thought")
+                            content_delta = delta.get("content")
+                        else:
+                            # Handle /v1/responses SSE stream formats
+                            if "delta" in chunk_data:
+                                d = chunk_data.get("delta")
+                                if isinstance(d, str):
+                                    content_delta = d
+                                elif isinstance(d, dict):
+                                    content_delta = d.get("text") or d.get("content")
+                            elif "response" in chunk_data and isinstance(chunk_data["response"], dict):
+                                resp_obj = chunk_data["response"]
+                                if "output" in resp_obj and isinstance(resp_obj["output"], list):
+                                    for item in resp_obj["output"]:
+                                        if item.get("type") == "message":
+                                            c = item.get("content", "")
+                                            if isinstance(c, list):
+                                                c = "".join([p.get("text","") for p in c if isinstance(p, dict)])
+                                            
+                                            if isinstance(c, str):
+                                                if accumulated_content and c.startswith(accumulated_content):
+                                                    content_delta = c[len(accumulated_content):]
+                                                else:
+                                                    content_delta = c
+                            elif "output" in chunk_data and isinstance(chunk_data["output"], list):
+                                for item in chunk_data["output"]:
+                                    if item.get("type") == "message":
+                                        c = item.get("content", "")
+                                        if isinstance(c, list):
+                                            c = "".join([p.get("text","") for p in c if isinstance(p, dict)])
+                                        
+                                        if isinstance(c, str):
+                                            if accumulated_content and c.startswith(accumulated_content):
+                                                content_delta = c[len(accumulated_content):]
+                                            else:
+                                                content_delta = c
                             
-                        delta = choices[0].get("delta", {})
-                        chunk_finish = choices[0].get("finish_reason")
-                        if chunk_finish:
-                            finish_reason = chunk_finish
-                        
-                        # Reasoning/Thinking delta (Gemma, DeepSeek, Qwen, Ollama, vLLM)
-                        reasoning_chunk = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thought")
+                            # Handle OpenWebUI function_call in streaming
+                            if "item" in chunk_data and isinstance(chunk_data["item"], dict):
+                                item = chunk_data["item"]
+                                if item.get("type") in ("function_call", "tool_call"):
+                                    idx = chunk_data.get("output_index", len(accumulated_tool_calls))
+                                    if idx not in accumulated_tool_calls:
+                                        accumulated_tool_calls[idx] = {
+                                            "id": item.get("id", item.get("call_id", f"call_{idx}")),
+                                            "name": "",
+                                            "arguments": ""
+                                        }
+                                    tc_acc = accumulated_tool_calls[idx]
+                                    if item.get("id"):
+                                        tc_acc["id"] = item["id"]
+                                    if item.get("name") and len(item["name"]) > len(tc_acc["name"]):
+                                        tc_acc["name"] = item["name"]
+                                    if item.get("arguments") and len(item["arguments"]) > len(tc_acc["arguments"]):
+                                        tc_acc["arguments"] = item["arguments"]
                         if reasoning_chunk:
                             accumulated_reasoning += reasoning_chunk
                             await event_bus.publish(StreamEvent(
@@ -440,7 +645,6 @@ async def _call_openai_compatible_stream(
                             ))
 
                         # Text content delta
-                        content_delta = delta.get("content")
                         if content_delta:
                             accumulated_content += content_delta
                             # Publish text delta event
@@ -451,7 +655,7 @@ async def _call_openai_compatible_stream(
                             ))
                         
                         # Tool call deltas
-                        tc_deltas = delta.get("tool_calls", [])
+                        tc_deltas = delta.get("tool_calls", []) if 'delta' in locals() and isinstance(delta, dict) else []
                         for tc_delta in tc_deltas:
                             idx = tc_delta.get("index", 0)
                             if idx not in accumulated_tool_calls:
@@ -538,12 +742,23 @@ async def _call_openai_compatible_stream(
                             ))
                             
                             # Add tool response to messages
+                            tool_result_for_msg = {k: v for k, v in tool_result.items() if k != "__vision_urls__"} if isinstance(tool_result, dict) else tool_result
                             current_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc_obj["id"],
                                 "name": func_name,
-                                "content": json.dumps(tool_result, ensure_ascii=False, default=str)
+                                "content": json.dumps(tool_result_for_msg, ensure_ascii=False, default=str)
                             })
+                            
+                            # If the tool returned vision data, inject as a user message with image_url parts
+                            vision_urls_from_tool = tool_result.get("__vision_urls__", []) if isinstance(tool_result, dict) else []
+                            if vision_urls_from_tool:
+                                vision_parts: List[Dict[str, Any]] = [
+                                    {"type": "text", "text": f"[Vision content loaded from message {tool_result.get('message_id', '?')}:]"}
+                                ]
+                                for v_url in vision_urls_from_tool:
+                                    vision_parts.append({"type": "image_url", "image_url": {"url": v_url}})
+                                current_messages.append({"role": "user", "content": vision_parts})
                             
                         # Continue the loop for the follow-up response
                         continue

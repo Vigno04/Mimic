@@ -19,6 +19,17 @@ from app.database.session import AsyncSessionLocal, get_db_file_path
 def get_utc_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
+async def migrate_db():
+    """Run lightweight SQLite migrations for new columns."""
+    import aiosqlite
+    db_path = get_db_file_path()
+    async with aiosqlite.connect(db_path) as db:
+        try:
+            await db.execute("ALTER TABLE chat_messages ADD COLUMN attachment_urls TEXT DEFAULT '[]'")
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
 # --- Chat Messages & FTS5 ---
 
 async def log_chat_message(
@@ -28,6 +39,7 @@ async def log_chat_message(
     author_name: str,
     content: str,
     has_attachments: bool = False,
+    attachment_urls: Optional[List[str]] = None,
     message_id: Optional[str] = None,
     reference_message_id: Optional[str] = None,
     is_reply: bool = False,
@@ -43,6 +55,7 @@ async def log_chat_message(
             author_name=author_name or "unknown",
             content=content,
             has_attachments=has_attachments,
+            attachment_urls=json.dumps(attachment_urls or []),
             reference_message_id=reference_message_id,
             is_reply=is_reply,
             reactions=json.dumps(reactions or []),

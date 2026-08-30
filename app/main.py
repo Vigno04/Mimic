@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.database.session import init_db
+from app.database.queries import migrate_db
 from app.bot.bot_manager import bot_manager
 from app.api.endpoints_router import router as endpoints_router
 from app.api.bots_router import router as bots_router
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Mimic...")
     # 1. Initialize SQLite Database + FTS5
     await init_db()
+    await migrate_db()
     logger.info("Database and FTS5 indices initialized.")
     
     # 2. Start bots configured as active

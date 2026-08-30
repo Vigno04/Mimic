@@ -705,17 +705,33 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Model</label>
-              <input type="text" id="endpoint-model-name" placeholder="gpt-4o-mini" required>
-            </div>
-            <div class="form-group">
               <label>Base URL</label>
               <input type="text" id="endpoint-base-url" placeholder="Leave empty for default">
             </div>
+            <div class="form-group">
+              <label>API Key</label>
+              <input type="password" id="endpoint-api-key" placeholder="sk-…">
+            </div>
           </div>
-          <div class="form-group">
-            <label>API Key</label>
-            <input type="password" id="endpoint-api-key" placeholder="sk-…">
+          <div class="form-row">
+            <div class="form-group" style="min-width:0;">
+              <div style="display:flex; justify-content:space-between; align-items:center; height:24px; margin-bottom:6px;">
+                <label style="margin:0; line-height:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Model / Deployment</label>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="fetchEndpointModels()" id="btn-fetch-models" style="padding: 2px 6px; font-size: 11px; line-height:1; flex-shrink:0;">Fetch Models</button>
+              </div>
+              <select id="endpoint-model-name" required style="width:100%; max-width:100%; box-sizing:border-box; text-overflow:ellipsis; overflow:hidden;">
+                <option value="">-- Click "Fetch Models" to load --</option>
+              </select>
+            </div>
+            <div class="form-group" style="min-width:0;">
+              <div style="display:flex; justify-content:space-between; align-items:center; height:24px; margin-bottom:6px;">
+                <label style="margin:0; line-height:1;">Standard</label>
+              </div>
+              <select id="endpoint-standard" required style="width:100%; max-width:100%; box-sizing:border-box;">
+                <option value="completions">Chat Completions</option>
+                <option value="responses">Responses (/v1/responses)</option>
+              </select>
+            </div>
           </div>
           <div class="form-group">
             <label class="checkbox-label">

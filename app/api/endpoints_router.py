@@ -5,9 +5,14 @@ from pydantic import BaseModel
 from sqlalchemy import select, delete, update
 from app.database.models import EndpointModel
 from app.database.session import get_db, AsyncSession
+import httpx
 from app.core.llm_client import test_endpoint_connectivity
 
 router = APIRouter(prefix="/api/endpoints", tags=["endpoints"])
+
+class FetchModelsRequest(BaseModel):
+    base_url: str
+    api_key: Optional[str] = None
 
 class EndpointCreate(BaseModel):
     name: str
@@ -15,6 +20,7 @@ class EndpointCreate(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_name: str
+    endpoint_standard: str = "completions"
     is_global_fallback: bool = False
 
 class EndpointUpdate(BaseModel):
@@ -23,6 +29,7 @@ class EndpointUpdate(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_name: Optional[str] = None
+    endpoint_standard: Optional[str] = None
     is_global_fallback: Optional[bool] = None
 
 @router.get("")
@@ -42,6 +49,7 @@ async def create_endpoint(payload: EndpointCreate, db: AsyncSession = Depends(ge
         base_url=payload.base_url,
         api_key=payload.api_key,
         model_name=payload.model_name,
+        endpoint_standard=payload.endpoint_standard,
         is_global_fallback=payload.is_global_fallback
     )
     db.add(endpoint)
@@ -81,3 +89,31 @@ async def test_endpoint(endpoint_id: str, db: AsyncSession = Depends(get_db)):
     if not endpoint:
         raise HTTPException(status_code=404, detail="Endpoint not found.")
     return await test_endpoint_connectivity(endpoint)
+
+@router.post("/fetch-models")
+async def fetch_models(payload: FetchModelsRequest):
+    base_url = payload.base_url.rstrip("/")
+    # Default to OpenAI if completely empty, otherwise use the provided url
+    if not base_url:
+        base_url = "https://api.openai.com/v1"
+    
+    url = f"{base_url}/models"
+    headers = {"Content-Type": "application/json"}
+    if payload.api_key:
+        headers["Authorization"] = f"Bearer {payload.api_key}"
+        
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch models: {resp.text}")
+            
+            data = resp.json()
+            models = data.get("data", [])
+            model_ids = [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+            if not model_ids and isinstance(models, list) and all(isinstance(x, str) for x in models):
+                model_ids = models
+                
+            return {"models": sorted(model_ids)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error connecting to provider: {str(e)}")

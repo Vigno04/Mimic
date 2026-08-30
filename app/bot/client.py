@@ -20,7 +20,25 @@ from app.core.llm_client import execute_llm_with_fallback, clean_response_text
 from app.core.event_bus import event_bus, StreamEvent
 from app.bot.handlers import setup_slash_commands
 
+import os
+import re
+
 logger = logging.getLogger(__name__)
+
+def save_media_file(filename: str, content: bytes) -> str:
+    """Saves downloaded media (GIFs, images, stickers) to /app/data/downloads for user inspection."""
+    try:
+        downloads_dir = "/app/data/downloads"
+        os.makedirs(downloads_dir, exist_ok=True)
+        safe_name = f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)}"
+        filepath = os.path.join(downloads_dir, safe_name)
+        with open(filepath, "wb") as f:
+            f.write(content)
+        logger.info(f"Saved media file to disk: {filepath} ({len(content)} bytes)")
+        return filepath
+    except Exception as e:
+        logger.warning(f"Failed to save media file: {e}")
+        return ""
 
 def split_message(text: str, max_chars: int = 1950) -> List[str]:
     """Splits a long message into chunks within Discord's character limit."""
@@ -340,26 +358,120 @@ class DiscordBotInstance:
         was_follow_up_active = self.active_conversations.get(channel_id, 0) > 0
             
         # 1. Vision & Attachments
-        has_attachments = len(message.attachments) > 0
-        image_urls = []
+        has_attachments = len(message.attachments) > 0 or len(message.stickers) > 0 or len(message.embeds) > 0
+        image_urls = []       # base64 data URIs for LLM context (current message only)
+        cdn_urls_to_save = [] # stable CDN URLs to persist in DB for historical re-use
         for att in message.attachments:
-            if att.content_type and att.content_type.startswith("image/"):
+            is_visual = (att.content_type and att.content_type.startswith("image/")) or any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"])
+            if is_visual:
                 try:
                     img_bytes = await att.read()
+                    filename = att.filename or "attachment"
                     b64_str = base64.b64encode(img_bytes).decode('utf-8')
-                    mime = att.content_type
+                    ext = filename.lower().split(".")[-1] if "." in filename else ""
+                    if ext == "gif" or (att.content_type and "gif" in att.content_type):
+                        mime = "image/gif"
+                    elif ext in ["jpg", "jpeg"] or (att.content_type and "jpeg" in att.content_type):
+                        mime = "image/jpeg"
+                    elif ext == "webp" or (att.content_type and "webp" in att.content_type):
+                        mime = "image/webp"
+                    else:
+                        mime = "image/png"
                     image_urls.append(f"data:{mime};base64,{b64_str}")
+                    # Save the CDN URL (note: Discord attachment URLs expire after ~24h)
+                    cdn_urls_to_save.append(att.url)
                 except Exception as e:
                     logger.warning(f"Error downloading image attachment: {e}")
-            elif any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"]):
-                try:
-                    img_bytes = await att.read()
+
+        # Stickers
+        for sticker in message.stickers:
+            logger.info(f"Received sticker: {sticker.name} (Format: {sticker.format})")
+            message.content = f"{message.content}\n[Sticker: {sticker.name}]".strip()
+            try:
+                img_bytes = None
+                mime = "image/gif"
+                cdn_gif_url = f"https://media.discordapp.net/stickers/{sticker.id}.gif"
+                cdn_png_url = f"https://media.discordapp.net/stickers/{sticker.id}.png"
+                chosen_cdn_url = None
+
+                # Try reading directly for PNG/APNG/GIF stickers
+                if sticker.format in (discord.StickerFormatType.png, discord.StickerFormatType.apng, discord.StickerFormatType.gif):
+                    try:
+                        img_bytes = await sticker.read()
+                        ext = "gif" if sticker.format == discord.StickerFormatType.gif else "png"
+                        mime = f"image/{ext}"
+                        chosen_cdn_url = cdn_gif_url if ext == "gif" else cdn_png_url
+                        logger.info(f"Sticker {sticker.name} read directly: {len(img_bytes)} bytes.")
+                    except Exception as read_err:
+                        logger.warning(f"Sticker {sticker.name} direct read failed: {read_err}, trying CDN fallback.")
+                
+                # For Lottie/unsupported OR if direct read failed, download GIF from Discord CDN
+                if not img_bytes:
+                    logger.info(f"Sticker {sticker.name} (Lottie/fallback), downloading from CDN: {cdn_gif_url}")
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(timeout=10.0, follow_redirects=True) as _cl:
+                        r = await _cl.get(cdn_gif_url)
+                        if r.status_code == 200:
+                            img_bytes = r.content
+                            mime = "image/gif"
+                            chosen_cdn_url = cdn_gif_url
+                            logger.info(f"Sticker {sticker.name} CDN GIF downloaded: {len(img_bytes)} bytes.")
+                        else:
+                            r2 = await _cl.get(cdn_png_url)
+                            if r2.status_code == 200:
+                                img_bytes = r2.content
+                                mime = "image/png"
+                                chosen_cdn_url = cdn_png_url
+                                logger.info(f"Sticker {sticker.name} CDN PNG downloaded: {len(img_bytes)} bytes.")
+                            else:
+                                logger.warning(f"Sticker {sticker.name} CDN download failed: GIF={r.status_code}, PNG={r2.status_code}")
+                
+                if img_bytes:
                     b64_str = base64.b64encode(img_bytes).decode('utf-8')
-                    ext = att.filename.lower().split(".")[-1]
-                    mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
                     image_urls.append(f"data:{mime};base64,{b64_str}")
-                except Exception as e:
-                    logger.warning(f"Error downloading image attachment: {e}")
+                    if chosen_cdn_url:
+                        cdn_urls_to_save.append(chosen_cdn_url)
+                    logger.info(f"Sticker {sticker.name} added to vision context as {mime}.")
+                else:
+                    logger.warning(f"Sticker {sticker.name}: could not obtain image data, skipping.")
+            except Exception as e:
+                logger.warning(f"Error downloading sticker {sticker.name}: {e}")
+        
+        # Embeds (for gifs, tenor, and linked images)
+        for embed in message.embeds:
+            if embed.type in ("image", "gifv") or embed.image or embed.thumbnail or embed.video:
+                url = None
+                if embed.image and embed.image.url:
+                    url = embed.image.url
+                elif embed.thumbnail and embed.thumbnail.url:
+                    url = embed.thumbnail.url
+                elif embed.video and embed.video.url:
+                    url = embed.video.url
+                elif embed.url:
+                    url = embed.url
+                
+                if url:
+                    try:
+                        import httpx
+                        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as _hclient:
+                            resp = await _hclient.get(url)
+                            if resp.status_code == 200:
+                                img_bytes = resp.content
+                                ext = "png"
+                                content_type = resp.headers.get("content-type", "")
+                                if ".gif" in url.lower() or "image/gif" in content_type:
+                                    ext = "gif"
+                                elif ".jpg" in url.lower() or ".jpeg" in url.lower() or "image/jpeg" in content_type:
+                                    ext = "jpeg"
+                                elif ".webp" in url.lower() or "image/webp" in content_type:
+                                    ext = "webp"
+                                
+                                b64_str = base64.b64encode(img_bytes).decode('utf-8')
+                                mime = f"image/{ext}"
+                                image_urls.append(f"data:{mime};base64,{b64_str}")
+                                cdn_urls_to_save.append(url)
+                    except Exception as e:
+                        logger.warning(f"Error downloading embed image: {e}")
 
         # 2. Passive ingestion into FTS5 history
         try:
@@ -370,6 +482,7 @@ class DiscordBotInstance:
                 author_name=author_name,
                 content=message.content,
                 has_attachments=has_attachments,
+                attachment_urls=cdn_urls_to_save if cdn_urls_to_save else None,
                 message_id=str(message.id),
                 reference_message_id=str(message.reference.message_id) if message.reference else None,
                 is_reply=message.type == discord.MessageType.reply,

@@ -20,7 +20,8 @@ from app.tools.discord_tools import (
     exec_get_user_info,
     exec_list_channel_members,
     exec_send_message_to_channel,
-    exec_get_channel_history
+    exec_get_channel_history,
+    exec_fetch_message_media
 )
 
 AVAILABLE_TOOLS: List[Dict[str, Any]] = [
@@ -394,6 +395,27 @@ AVAILABLE_TOOLS: List[Dict[str, Any]] = [
                 }
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_message_media",
+            "description": "Fetches and loads the visual content (images, GIFs, stickers) from a specific Discord message by its ID. Use this when a user references a past message that contained a visual attachment and you want to see/analyze it. The message ID is shown in chat history as 'msg:ID'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "The numeric Discord message ID (e.g. '1234567890'). The format 'msg:ID' is also accepted."
+                    },
+                    "channel_id": {
+                        "type": "string",
+                        "description": "Optional channel ID or name. If omitted, uses the current channel."
+                    }
+                },
+                "required": ["message_id"]
+            }
+        }
     }
 ]
 
@@ -514,6 +536,12 @@ async def dispatch_tool_call(name: str, arguments: Dict[str, Any], context: Opti
             return await exec_list_channel_members(
                 channel_id=arguments.get("channel_id"),
                 limit=int(arguments.get("limit", 50)),
+                discord_context=ctx
+            )
+        elif name == "fetch_message_media":
+            return await exec_fetch_message_media(
+                message_id=arguments.get("message_id", ""),
+                channel_id=arguments.get("channel_id"),
                 discord_context=ctx
             )
         else:

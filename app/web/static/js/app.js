@@ -166,6 +166,7 @@ function editEndpoint(id) {
   document.getElementById('endpoint-id').value=ep.id;
   document.getElementById('endpoint-name').value=ep.name;
   document.getElementById('endpoint-provider').value=ep.provider;
+  document.getElementById('endpoint-standard').value=ep.endpoint_standard || 'completions';
   document.getElementById('endpoint-base-url').value=ep.base_url||'';
   document.getElementById('endpoint-api-key').value=ep.api_key||'';
   document.getElementById('endpoint-model-name').value=ep.model_name;
@@ -177,7 +178,15 @@ function editEndpoint(id) {
 async function saveEndpoint(e) {
   e.preventDefault();
   const id=document.getElementById('endpoint-id').value;
-  const p={name:document.getElementById('endpoint-name').value,provider:document.getElementById('endpoint-provider').value,base_url:document.getElementById('endpoint-base-url').value||null,api_key:document.getElementById('endpoint-api-key').value||null,model_name:document.getElementById('endpoint-model-name').value,is_global_fallback:document.getElementById('endpoint-global-fallback').checked};
+  const p={
+    name:document.getElementById('endpoint-name').value,
+    provider:document.getElementById('endpoint-provider').value,
+    endpoint_standard:document.getElementById('endpoint-standard').value,
+    base_url:document.getElementById('endpoint-base-url').value||null,
+    api_key:document.getElementById('endpoint-api-key').value||null,
+    model_name:document.getElementById('endpoint-model-name').value,
+    is_global_fallback:document.getElementById('endpoint-global-fallback').checked
+  };
   try {
     const r=await fetch(id?`/api/endpoints/${id}`:'/api/endpoints/',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
     if(!r.ok)throw new Error(await r.text());
@@ -188,6 +197,48 @@ async function saveEndpoint(e) {
 async function deleteEndpoint(id) {
   if(!confirm('Delete this endpoint?'))return;
   try{await fetch(`/api/endpoints/${id}`,{method:'DELETE'}); showToast('Deleted'); loadEndpoints();}catch(e){showToast(e.message,'error');}
+}
+
+async function fetchEndpointModels() {
+  const baseUrl = document.getElementById('endpoint-base-url').value;
+  const apiKey = document.getElementById('endpoint-api-key').value;
+  const btn = document.getElementById('btn-fetch-models');
+  const sel = document.getElementById('endpoint-model-name');
+  
+  if (!sel || !btn) return;
+  
+  btn.textContent = 'Fetching...';
+  btn.disabled = true;
+  sel.innerHTML = '<option value="">-- Loading... --</option>';
+  
+  try {
+    const res = await fetch('/api/endpoints/fetch-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey || null })
+    });
+    
+    if (!res.ok) {
+      const errData = await res.json().catch(()=>({}));
+      throw new Error(errData.detail || `HTTP ${res.status}`);
+    }
+    
+    const data = await res.json();
+    if (!data.models || data.models.length === 0) {
+      sel.innerHTML = '<option value="">-- No models found --</option>';
+      showToast('No models returned by the provider', 'error');
+    } else {
+      sel.innerHTML = '<option value="">-- Select a model --</option>' +
+                      data.models.map(m => `<option value="${jsEsc(m)}">${jsEsc(m)}</option>`).join('');
+      showToast(`Fetched ${data.models.length} models!`);
+    }
+  } catch (err) {
+    sel.innerHTML = '<option value="">-- Error fetching --</option>';
+    showToast(`Error: ${err.message}`, 'error');
+  } finally {
+    btn.textContent = 'Fetch Models';
+    btn.disabled = false;
+  }
 }
 
 // ── Bots ──

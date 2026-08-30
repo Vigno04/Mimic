@@ -23,6 +23,7 @@ class EndpointModel(Base):
     base_url = Column(String, nullable=True)
     api_key = Column(String, nullable=True)
     model_name = Column(String, nullable=False)
+    endpoint_standard = Column(String, nullable=False, default="completions") # completions, responses
     is_global_fallback = Column(Boolean, default=False)
     created_at = Column(DateTime, default=get_utc_now)
 
@@ -34,6 +35,7 @@ class EndpointModel(Base):
             "base_url": self.base_url,
             "api_key": self.api_key,
             "model_name": self.model_name,
+            "endpoint_standard": self.endpoint_standard or "completions",
             "is_global_fallback": bool(self.is_global_fallback),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -206,6 +208,7 @@ class ChatMessageModel(Base):
     author_name = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     has_attachments = Column(Boolean, default=False)
+    attachment_urls = Column(Text, nullable=True, default="[]")  # JSON Array of CDN URLs for vision re-use
     reference_message_id = Column(String, nullable=True)
     is_reply = Column(Boolean, default=False)
     reactions = Column(Text, nullable=True, default="[]")
@@ -221,6 +224,7 @@ class ChatMessageModel(Base):
             "author_name": self.author_name,
             "content": self.content,
             "has_attachments": bool(self.has_attachments),
+            "attachment_urls": json.loads(self.attachment_urls) if self.attachment_urls else [],
             "reference_message_id": self.reference_message_id,
             "is_reply": bool(self.is_reply),
             "reactions": json.loads(self.reactions) if self.reactions else [],
