@@ -38,6 +38,12 @@ function switchTab(tabId) {
 function openModal(id) { document.getElementById(id)?.classList.add('active'); }
 function closeModal(id) { document.getElementById(id)?.classList.remove('active'); }
 
+window.onclick = function(event) {
+  if (event.target.classList.contains('modal-backdrop')) {
+    event.target.classList.remove('active');
+  }
+}
+
 // ── Dashboard ──
 
 async function loadDashboardStats() {
@@ -360,6 +366,7 @@ function getTriggersFromContainer(containerId) {
     type: row.querySelector('.trigger-rule-type')?.value || 'keywords',
     pattern: row.querySelector('.trigger-rule-pattern')?.value?.trim() || '',
     case_sensitive: row.querySelector('.trigger-rule-case')?.checked || false,
+    disable_typing: row.querySelector('.trigger-rule-disable-typing')?.checked || false,
     reply_policy: row.querySelector('.trigger-rule-policy')?.value || 'ai_choice',
     active_hours: row.querySelector('.trigger-rule-hours')?.value?.trim() || '09:00-23:00',
     topic: row.querySelector('.trigger-rule-topic')?.value?.trim() || ''
@@ -394,6 +401,7 @@ function addTriggerRuleRow(rule = {}, containerOrId = null) {
   const policyVal = rule.reply_policy || (typeVal === 'spontaneous' ? 'ai_choice' : 'ai_choice');
   const hoursVal = rule.active_hours || '09:00-23:00';
   const topicVal = rule.topic || '';
+  const disableTypingVal = !!rule.disable_typing;
 
   row.innerHTML = `
     <div class="trigger-rule-header">
@@ -423,6 +431,10 @@ function addTriggerRuleRow(rule = {}, containerOrId = null) {
       <label class="checkbox-label trigger-rule-case-label" style="display:${typeVal === 'keywords' ? 'flex' : 'none'};">
         <input type="checkbox" class="trigger-rule-case" ${caseVal ? 'checked' : ''}>
         <span style="font-size:11px;">Case sensitive</span>
+      </label>
+      <label class="checkbox-label trigger-rule-disable-typing-label" style="display:flex; margin-left:8px;">
+        <input type="checkbox" class="trigger-rule-disable-typing" ${disableTypingVal ? 'checked' : ''}>
+        <span style="font-size:11px;">Disable typing indicator</span>
       </label>
       <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
         <span style="font-size:11px; color:var(--text-2);">Reply policy:</span>

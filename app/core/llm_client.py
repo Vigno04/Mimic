@@ -237,15 +237,25 @@ def convert_to_responses_payload(payload: dict) -> dict:
                 p_type = part.get('type')
                 if p_type in ('text', 'input_text'):
                     content_parts.append({'type': text_type, 'text': part.get('text', '')})
-                elif p_type in ('image_url', 'input_image'):
-                    url_data = part.get('image_url', {})
+                elif p_type in ('image_url', 'input_image', 'input_file', 'video_url', 'audio_url', 'file_url'):
+                    url_data = part.get(p_type, part.get('image_url', {}))
                     if isinstance(url_data, dict):
                         url = url_data.get('url', '')
                         detail = url_data.get('detail') or 'auto'
                     else:
                         url = url_data if isinstance(url_data, str) else ''
                         detail = 'auto'
-                    content_parts.append({'type': 'input_image', 'image_url': url, 'detail': detail})
+                        
+                    if url.startswith("data:video/") or url.startswith("data:audio/") or p_type in ('input_file', 'video_url', 'audio_url', 'file_url'):
+                        content_parts.append({
+                            'type': 'input_file',
+                            'file_data': url
+                        })
+                    else:
+                        content_parts.append({
+                            'type': 'input_image',
+                            'image_url': url
+                        })
         else:
             content_parts = [{'type': text_type, 'text': str(content)}]
 
@@ -585,7 +595,10 @@ async def _call_openai_compatible_stream(
                             content_delta = delta.get("content")
                         else:
                             # Handle /v1/responses SSE stream formats
-                            if "delta" in chunk_data:
+                            if chunk_data.get("type") == "error":
+                                err_msg = chunk_data.get("error", {}).get("message", "Unknown error in stream")
+                                raise Exception(f"Responses API error: {err_msg}")
+                            elif "delta" in chunk_data:
                                 d = chunk_data.get("delta")
                                 if isinstance(d, str):
                                     content_delta = d

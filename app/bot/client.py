@@ -22,6 +22,8 @@ from app.bot.handlers import setup_slash_commands
 
 import os
 import re
+import io
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,66 @@ def save_media_file(filename: str, content: bytes) -> str:
     except Exception as e:
         logger.warning(f"Failed to save media file: {e}")
         return ""
+
+async def extract_and_download_markdown_media(text: str) -> tuple[str, List[discord.File]]:
+    """Extracts markdown images/videos, downloads them, and removes the markdown from the text."""
+    files = []
+    # Pattern 1: [![Title](thumb)](video_url) - Gemini-FastAPI video format
+    video_pattern = r'\[!\[(.*?)\]\((.*?)\)\]\((.*?)\)'
+    
+    # Pattern 2: ![Title](image_url) - standard markdown image
+    img_pattern = r'!\[(.*?)\]\((.*?)\)'
+    
+    urls_to_download = []
+    
+    # Extract videos
+    for match in re.finditer(video_pattern, text):
+        title, thumb_url, video_url = match.groups()
+        urls_to_download.append((title or "video", video_url))
+    text = re.sub(video_pattern, '', text)
+    
+    # Extract images
+    for match in re.finditer(img_pattern, text):
+        title, img_url = match.groups()
+        # Skip if it's already a video we just removed (shouldn't happen due to sub)
+        urls_to_download.append((title or "image", img_url))
+    text = re.sub(img_pattern, '', text)
+    
+    # Clean up empty lines left behind
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    
+    if urls_to_download:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            for title, url in urls_to_download:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        # Guess extension from content type or url
+                        content_type = resp.headers.get("content-type", "")
+                        ext = ""
+                        if "image/gif" in content_type: ext = ".gif"
+                        elif "image/jpeg" in content_type: ext = ".jpg"
+                        elif "image/png" in content_type: ext = ".png"
+                        elif "image/webp" in content_type: ext = ".webp"
+                        elif "video/mp4" in content_type: ext = ".mp4"
+                        elif "audio/mpeg" in content_type: ext = ".mp3"
+                        
+                        if not ext:
+                            # fallback to url parsing
+                            url_ext = url.split("?")[0].split(".")[-1].lower()
+                            if url_ext in ["gif", "jpg", "jpeg", "png", "webp", "mp4", "webm", "mp3", "wav", "ogg"]:
+                                ext = f".{url_ext}"
+                            else:
+                                ext = ".png" if "image" in content_type else ".mp4" if "video" in content_type else ""
+                        
+                        safe_title = re.sub(r'[^a-zA-Z0-9_.-]', '_', title)[:30]
+                        filename = f"{safe_title}{ext}" if safe_title else f"media{ext}"
+                        
+                        files.append(discord.File(fp=io.BytesIO(resp.content), filename=filename))
+                except Exception as e:
+                    logger.warning(f"Failed to download markdown media {url}: {e}")
+                    
+    return text, files
 
 def split_message(text: str, max_chars: int = 1950) -> List[str]:
     """Splits a long message into chunks within Discord's character limit."""
@@ -96,6 +158,16 @@ class TypingContext:
                 await self.task
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
+
+import contextlib
+
+@contextlib.asynccontextmanager
+async def conditional_typing(channel, disable: bool):
+    if disable:
+        yield
+    else:
+        async with TypingContext(channel):
+            yield
 
 def _parse_frequency_interval(pattern: str) -> float:
     """Parses frequency string like '2/day', '5/week', '10/month' into seconds with random jitter."""
@@ -164,7 +236,7 @@ class DiscordBotInstance:
         self.config = config
         self.user_cooldowns: Dict[str, float] = {}  # user_id -> last_timestamp
         self.consecutive_bot_replies: Dict[str, int] = {}  # channel_id -> count
-        self.active_conversations: Dict[str, int] = {}  # channel_id -> messages_left
+        self.global_follow_up_count: int = 0
         self.spontaneous_task: Optional[asyncio.Task] = None
         self.spontaneous_last_run: Dict[str, float] = {}
         self.spontaneous_intervals: Dict[str, float] = {}
@@ -355,33 +427,40 @@ class DiscordBotInstance:
         except Exception as e:
             logger.debug(f"Notice on user sync in _handle_incoming_message: {e}")
         
-        was_follow_up_active = self.active_conversations.get(channel_id, 0) > 0
+        was_follow_up_active = self.global_follow_up_count > 0
             
         # 1. Vision & Attachments
         has_attachments = len(message.attachments) > 0 or len(message.stickers) > 0 or len(message.embeds) > 0
         image_urls = []       # base64 data URIs for LLM context (current message only)
         cdn_urls_to_save = [] # stable CDN URLs to persist in DB for historical re-use
         for att in message.attachments:
-            is_visual = (att.content_type and att.content_type.startswith("image/")) or any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"])
-            if is_visual:
+            is_media = False
+            mime = "application/octet-stream"
+            
+            if att.content_type:
+                if att.content_type.startswith("image/") or att.content_type.startswith("video/") or att.content_type.startswith("audio/"):
+                    is_media = True
+                    mime = att.content_type
+            else:
+                ext = att.filename.lower().split(".")[-1] if "." in att.filename else ""
+                if ext in ["png", "jpg", "jpeg", "webp", "gif"]:
+                    is_media = True
+                    mime = f"image/{ext if ext != 'jpg' else 'jpeg'}"
+                elif ext in ["mp4", "webm", "mov"]:
+                    is_media = True
+                    mime = f"video/{ext}"
+                elif ext in ["mp3", "wav", "ogg", "mpeg"]:
+                    is_media = True
+                    mime = f"audio/{ext}"
+
+            if is_media:
                 try:
-                    img_bytes = await att.read()
-                    filename = att.filename or "attachment"
-                    b64_str = base64.b64encode(img_bytes).decode('utf-8')
-                    ext = filename.lower().split(".")[-1] if "." in filename else ""
-                    if ext == "gif" or (att.content_type and "gif" in att.content_type):
-                        mime = "image/gif"
-                    elif ext in ["jpg", "jpeg"] or (att.content_type and "jpeg" in att.content_type):
-                        mime = "image/jpeg"
-                    elif ext == "webp" or (att.content_type and "webp" in att.content_type):
-                        mime = "image/webp"
-                    else:
-                        mime = "image/png"
+                    media_bytes = await att.read()
+                    b64_str = base64.b64encode(media_bytes).decode('utf-8')
                     image_urls.append(f"data:{mime};base64,{b64_str}")
-                    # Save the CDN URL (note: Discord attachment URLs expire after ~24h)
                     cdn_urls_to_save.append(att.url)
                 except Exception as e:
-                    logger.warning(f"Error downloading image attachment: {e}")
+                    logger.warning(f"Error downloading media attachment: {e}")
 
         # Stickers
         for sticker in message.stickers:
@@ -544,10 +623,11 @@ class DiscordBotInstance:
 
         # Decrement follow up counter ONLY IF the matched rule was follow_up
         if matched_rule.get("type") == "follow_up":
-            self.active_conversations[channel_id] -= 1
+            self.global_follow_up_count = max(0, self.global_follow_up_count - 1)
 
         # 9. AI Execution with typing indicator and trigger-specific reply policy
-        await self._process_ai_response(message, image_urls, guild_id, reply_policy=rule_reply_policy)
+        disable_typing = matched_rule.get("disable_typing", False)
+        await self._process_ai_response(message, image_urls, guild_id, reply_policy=rule_reply_policy, disable_typing=disable_typing)
 
     async def _match_trigger_rule(self, message: discord.Message, was_follow_up_active: bool = False) -> Optional[Dict[str, Any]]:
         """Evaluates configured trigger rules in priority order and returns the first matching rule."""
@@ -617,14 +697,14 @@ class DiscordBotInstance:
 
         return None
 
-    async def _process_ai_response(self, message: discord.Message, image_urls: List[str], guild_id: Optional[str], reply_policy: str = "ai_choice"):
+    async def _process_ai_response(self, message: discord.Message, image_urls: List[str], guild_id: Optional[str], reply_policy: str = "ai_choice", disable_typing: bool = False):
         channel_id = str(message.channel.id)
         author_id = str(message.author.id)
         author_name = message.author.display_name or message.author.name
         channel_name = getattr(message.channel, "name", "DM")
         
         try:
-            async with TypingContext(message.channel):
+            async with conditional_typing(message.channel, disable_typing):
                 # 1. Build Context (system prompt, lore, user memories, recent history)
                 context_result = await build_llm_context(
                     bot_id=self.bot_id,
@@ -731,19 +811,27 @@ class DiscordBotInstance:
 
                 # 6. Send Reply (handling long messages > 1950 characters and stripping thinking tokens)
                 reply_text = clean_response_text(llm_result.text)
-                if reply_text:
-                    chunks = split_message(reply_text)
-                    for idx, chunk in enumerate(chunks):
-                        if idx == 0:
-                            await message.reply(chunk, mention_author=False)
-                        else:
-                            await message.channel.send(chunk)
+                
+                # Extract markdown media and download it for native Discord attachments
+                reply_text, attached_files = await extract_and_download_markdown_media(reply_text)
+                
+                if reply_text or attached_files:
+                    if reply_text:
+                        chunks = split_message(reply_text)
+                        for idx, chunk in enumerate(chunks):
+                            files_to_send = attached_files if idx == len(chunks) - 1 else []
+                            if idx == 0:
+                                await message.reply(chunk, mention_author=False, files=files_to_send)
+                            else:
+                                await message.channel.send(chunk, files=files_to_send)
+                    else:
+                        await message.reply(mention_author=False, files=attached_files)
                             
                     # Reset follow up counter if rule exists
                     follow_up_rule = next((r for r in self.config.get("triggers", []) if r.get("type") == "follow_up"), None)
                     if follow_up_rule:
                         try:
-                            self.active_conversations[channel_id] = int(follow_up_rule.get("pattern", "3"))
+                            self.global_follow_up_count = int(follow_up_rule.get("pattern", "3"))
                         except ValueError:
                             pass
                             
